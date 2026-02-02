@@ -13,6 +13,34 @@ import fitz  # PyMuPDF
 
 from remarkawise.models import Highlight
 
+# PDF ligature mappings (Unicode ligatures to their decomposed forms)
+LIGATURE_MAP = {
+    "\ufb00": "ff",   # ﬀ
+    "\ufb01": "fi",   # ﬁ
+    "\ufb02": "fl",   # ﬂ
+    "\ufb03": "ffi",  # ﬃ
+    "\ufb04": "ffl",  # ﬄ
+    "\ufb05": "st",   # ﬅ (long s + t)
+    "\ufb06": "st",   # ﬆ
+}
+
+
+def decode_ligatures(text: str) -> str:
+    """Decode PDF ligatures to their decomposed forms.
+
+    PDFs often use typographic ligatures (fi, fl, ff, etc.) as single
+    Unicode characters. This function converts them back to separate letters.
+
+    Args:
+        text: Text potentially containing ligature characters
+
+    Returns:
+        Text with ligatures replaced by their component letters
+    """
+    for ligature, replacement in LIGATURE_MAP.items():
+        text = text.replace(ligature, replacement)
+    return text
+
 
 class PDFHighlightExtractor:
     """Extracts highlighted text from PDFs using coordinate regions."""
@@ -77,6 +105,9 @@ class PDFHighlightExtractor:
 
         # Extract text from the rectangle
         text = page.get_text("text", clip=rect)
+
+        # Decode PDF ligatures (fi, fl, ff, etc.)
+        text = decode_ligatures(text)
 
         return text.strip()
 
@@ -147,6 +178,9 @@ class PDFHighlightExtractor:
                 # Get the highlighted text
                 rect = annot.rect
                 text = page.get_text("text", clip=rect).strip()
+
+                # Decode PDF ligatures (fi, fl, ff, etc.)
+                text = decode_ligatures(text)
 
                 if not text:
                     continue

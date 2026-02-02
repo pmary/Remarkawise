@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Optional
 
+from remarkawise.pdf.extractor import decode_ligatures
+
 # Import rmscene for v6 format support
 try:
     from rmscene import read_blocks, SceneLineItemBlock, SceneGlyphItemBlock
@@ -248,7 +250,9 @@ class RMFileParser:
                         # PenColor.HIGHLIGHT is 9
                         if color_val == 9 or (hasattr(PenColor, 'HIGHLIGHT') and glyph_range.color == PenColor.HIGHLIGHT):
                             text = glyph_range.text
+                            # Decode PDF ligatures (fi, fl, ff, etc.)
                             if text:
+                                text = decode_ligatures(text)
                                 # Extract rectangles
                                 rects = []
                                 if hasattr(glyph_range, 'rectangles') and glyph_range.rectangles:
