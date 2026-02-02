@@ -357,6 +357,113 @@ class TestConvertToReadwiseHighlights:
         assert result == []
 
 
+class TestReadwiseClientDeleteHighlights:
+    """Tests for highlight deletion operations."""
+
+    @respx.mock
+    def test_delete_highlight_success(self) -> None:
+        """Test deleting a highlight successfully."""
+        respx.delete("https://readwise.io/api/v2/highlights/12345").respond(
+            status_code=204
+        )
+
+        client = ReadwiseClient(access_token="test-token")
+        result = client.delete_highlight(12345)
+
+        assert result is True
+        client.close()
+
+    @respx.mock
+    def test_delete_highlight_not_found(self) -> None:
+        """Test deleting a highlight that doesn't exist."""
+        respx.delete("https://readwise.io/api/v2/highlights/99999").respond(
+            status_code=404
+        )
+
+        client = ReadwiseClient(access_token="test-token")
+        result = client.delete_highlight(99999)
+
+        assert result is False
+        client.close()
+
+    @respx.mock
+    def test_delete_highlight_rate_limited(self) -> None:
+        """Test handling rate limit when deleting."""
+        respx.delete("https://readwise.io/api/v2/highlights/12345").respond(
+            status_code=429, headers={"Retry-After": "30"}
+        )
+
+        client = ReadwiseClient(access_token="test-token")
+
+        with pytest.raises(ReadwiseRateLimitError) as exc_info:
+            client.delete_highlight(12345)
+
+        assert exc_info.value.retry_after == 30
+        client.close()
+
+    @respx.mock
+    def test_delete_highlight_api_error(self) -> None:
+        """Test handling API error during deletion."""
+        respx.delete("https://readwise.io/api/v2/highlights/12345").respond(
+            status_code=500, text="Internal Server Error"
+        )
+
+        client = ReadwiseClient(access_token="test-token")
+
+        with pytest.raises(ReadwiseAPIError) as exc_info:
+            client.delete_highlight(12345)
+
+        assert "Failed to delete highlight" in str(exc_info.value)
+        client.close()
+
+    @respx.mock
+    def test_delete_highlights_multiple(self) -> None:
+        """Test deleting multiple highlights."""
+        respx.delete("https://readwise.io/api/v2/highlights/1").respond(status_code=204)
+        respx.delete("https://readwise.io/api/v2/highlights/2").respond(status_code=204)
+        respx.delete("https://readwise.io/api/v2/highlights/3").respond(status_code=404)
+
+        client = ReadwiseClient(access_token="test-token")
+        deleted = client.delete_highlights([1, 2, 3])
+
+        assert deleted == 2  # Only 2 were actually deleted
+        client.close()
+
+    @respx.mock
+    def test_create_highlights_returns_readwise_ids(self) -> None:
+        """Test that create_highlights returns Readwise IDs."""
+        respx.post("https://readwise.io/api/v2/highlights/").respond(
+            status_code=200,
+            json=[
+                {"id": 1001, "text": "First highlight"},
+                {"id": 1002, "text": "Second highlight"},
+            ]
+        )
+
+        client = ReadwiseClient(access_token="test-token")
+
+        highlights = [
+            ReadwiseHighlight(
+                text="First highlight",
+                title="Test Book",
+                author="Test Author",
+            ),
+            ReadwiseHighlight(
+                text="Second highlight",
+                title="Test Book",
+                author="Test Author",
+            ),
+        ]
+
+        result = client.create_highlights(highlights)
+
+        assert result["created"] == 2
+        assert "readwise_ids" in result
+        # The readwise_ids should map text_hash to Readwise ID
+        assert len(result["readwise_ids"]) == 2
+        client.close()
+
+
 class TestReadwiseClientContextManager:
     """Tests for context manager usage."""
 

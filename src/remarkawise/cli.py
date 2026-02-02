@@ -8,10 +8,12 @@ from rich.console import Console
 from rich.table import Table
 
 from remarkawise import __version__
-from remarkawise.config import Settings, settings
+from remarkawise.config import DataSource, Settings, settings
 from remarkawise.readwise.client import ReadwiseClient
 from remarkawise.remarkable.client import RemarkableClient
+from remarkawise.remarkable.local_cache import LocalCacheClient, LocalCacheError
 from remarkawise.sync.engine import SyncEngine
+from remarkawise.sync.state import StateManager
 
 app = typer.Typer(
     name="remarkawise",
@@ -57,17 +59,42 @@ def sync(
         "-d",
         help="Sync only a specific document by ID.",
     ),
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        "-s",
+        help="Data source: 'local' (desktop app cache) or 'cloud' (reMarkable API).",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Show detailed debug information during sync.",
+    ),
 ) -> None:
     """Sync highlights from reMarkable to Readwise.
 
-    Downloads PDFs from reMarkable Cloud, extracts highlights,
-    and uploads them to your Readwise account.
+    Extracts highlights from reMarkable documents and uploads them to Readwise.
+    By default, uses the local desktop app cache. Use --source=cloud for API.
     """
-    # Validate configuration
-    if not settings.remarkable_device_token:
+    # Override source if specified
+    effective_source = settings.remarkable_source
+    if source:
+        try:
+            effective_source = DataSource(source.lower())
+        except ValueError:
+            console.print(
+                f"[red]Error:[/red] Invalid source '{source}'. "
+                "Use 'local' or 'cloud'."
+            )
+            raise typer.Exit(1)
+
+    # Validate configuration based on source
+    if effective_source == DataSource.CLOUD and not settings.remarkable_device_token:
         console.print(
-            "[red]Error:[/red] reMarkable not configured. "
-            "Run 'remarkawise auth remarkable' first."
+            "[red]Error:[/red] reMarkable not configured for cloud access. "
+            "Run 'remarkawise auth remarkable' first, "
+            "or use --source=local for local cache."
         )
         raise typer.Exit(1)
 
@@ -78,32 +105,64 @@ def sync(
         )
         raise typer.Exit(1)
 
-    console.print("[bold]Starting sync...[/bold]")
+    source_label = "local cache" if effective_source == DataSource.LOCAL else "cloud"
+    console.print(f"[bold]Starting sync from {source_label}...[/bold]")
 
     try:
-        engine = SyncEngine(settings)
+        # Create settings copy with effective source
+        sync_settings = Settings(
+            remarkable_source=effective_source,
+            remarkable_local_cache_path=settings.remarkable_local_cache_path,
+            remarkable_device_token=settings.remarkable_device_token,
+            readwise_access_token=settings.readwise_access_token,
+            sync_interval_minutes=settings.sync_interval_minutes,
+            sync_folders=settings.sync_folders,
+            data_dir=settings.data_dir,
+        )
+        engine = SyncEngine(sync_settings, verbose=verbose)
         document_ids = [document] if document else None
 
-        with console.status("[bold green]Syncing highlights..."):
+        if verbose:
             result = engine.sync(force=force, document_ids=document_ids)
+        else:
+            with console.status("[bold green]Syncing highlights..."):
+                result = engine.sync(force=force, document_ids=document_ids)
 
+        # Get total stats before closing
+        total_stats = engine.get_status()
         engine.close()
 
         if result.success:
-            console.print(
+            stats = (
                 f"\n[green]Sync completed successfully![/green]\n"
                 f"  Documents processed: {result.documents_processed}\n"
                 f"  Highlights synced: {result.highlights_synced}"
             )
+            if result.highlights_deleted > 0:
+                stats += f"\n  Highlights deleted: {result.highlights_deleted}"
+            total_count = total_stats['stats']['highlights_synced']
+            if document:
+                stats += f"\n  Total highlights tracked: {total_count} (across all documents)"
+            else:
+                stats += f"\n  Total highlights tracked: {total_count}"
+            console.print(stats)
         else:
             console.print(f"\n[yellow]Sync completed with errors:[/yellow]")
             for error in result.errors:
                 console.print(f"  [red]- {error}[/red]")
 
-            console.print(
+            stats = (
                 f"\n  Documents processed: {result.documents_processed}\n"
                 f"  Highlights synced: {result.highlights_synced}"
             )
+            if result.highlights_deleted > 0:
+                stats += f"\n  Highlights deleted: {result.highlights_deleted}"
+            total_count = total_stats['stats']['highlights_synced']
+            if document:
+                stats += f"\n  Total highlights tracked: {total_count} (across all documents)"
+            else:
+                stats += f"\n  Total highlights tracked: {total_count}"
+            console.print(stats)
 
     except Exception as e:
         console.print(f"[red]Error:[/red] {str(e)}")
@@ -229,18 +288,59 @@ def _auth_readwise() -> None:
 
 
 @app.command()
-def list_documents() -> None:
-    """List all documents in your reMarkable cloud."""
-    if not settings.remarkable_device_token:
+def list_documents(
+    source: Optional[str] = typer.Option(
+        None,
+        "--source",
+        "-s",
+        help="Data source: 'local' (desktop app cache) or 'cloud' (reMarkable API).",
+    ),
+    all_types: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Show all document types, not just PDFs.",
+    ),
+    full_id: bool = typer.Option(
+        False,
+        "--full-id",
+        help="Show full document IDs (useful for --document flag).",
+    ),
+) -> None:
+    """List all documents from reMarkable.
+
+    By default, uses the local desktop app cache. Use --source=cloud for API.
+    """
+    # Determine effective source
+    effective_source = settings.remarkable_source
+    if source:
+        try:
+            effective_source = DataSource(source.lower())
+        except ValueError:
+            console.print(
+                f"[red]Error:[/red] Invalid source '{source}'. "
+                "Use 'local' or 'cloud'."
+            )
+            raise typer.Exit(1)
+
+    # Validate configuration
+    if effective_source == DataSource.CLOUD and not settings.remarkable_device_token:
         console.print(
-            "[red]Error:[/red] reMarkable not configured. "
-            "Run 'remarkawise auth remarkable' first."
+            "[red]Error:[/red] reMarkable not configured for cloud access. "
+            "Run 'remarkawise auth remarkable' first, "
+            "or use --source=local for local cache."
         )
         raise typer.Exit(1)
 
+    source_label = "local cache" if effective_source == DataSource.LOCAL else "cloud"
+
     try:
-        with console.status("[bold green]Fetching documents..."):
-            client = RemarkableClient(settings.remarkable_device_token)
+        with console.status(f"[bold green]Fetching documents from {source_label}..."):
+            if effective_source == DataSource.LOCAL:
+                client = LocalCacheClient(settings.remarkable_local_cache_path)
+            else:
+                client = RemarkableClient(settings.remarkable_device_token)
+
             documents = client.list_documents()
             client.close()
 
@@ -248,25 +348,195 @@ def list_documents() -> None:
             console.print("[dim]No documents found.[/dim]")
             return
 
-        # Filter to PDFs
-        pdf_docs = [d for d in documents if d.document_type.value == "pdf"]
+        # Filter to syncable types (PDF and EPUB) unless --all is specified
+        if all_types:
+            filtered_docs = documents
+        else:
+            syncable_types = {"pdf", "epub"}
+            filtered_docs = [d for d in documents if d.document_type.value in syncable_types]
 
-        console.print(f"\n[bold]Found {len(pdf_docs)} PDF documents:[/bold]\n")
+        doc_type_label = "documents" if all_types else "syncable documents (PDF/EPUB)"
+        console.print(f"\n[bold]Found {len(filtered_docs)} {doc_type_label} ({source_label}):[/bold]\n")
 
         table = Table()
-        table.add_column("ID", style="dim")
+        table.add_column("ID", style="dim", no_wrap=full_id)
         table.add_column("Name", style="cyan")
+        if all_types:
+            table.add_column("Type")
         table.add_column("Modified")
 
-        for doc in pdf_docs:
-            table.add_row(
-                doc.id[:8] + "...",
+        for doc in filtered_docs:
+            doc_id_display = doc.id if full_id else doc.id[:8] + "..."
+            row = [
+                doc_id_display,
                 doc.name[:50],
-                doc.modified_time.strftime("%Y-%m-%d %H:%M"),
-            )
+            ]
+            if all_types:
+                row.append(doc.document_type.value)
+            row.append(doc.modified_time.strftime("%Y-%m-%d %H:%M"))
+            table.add_row(*row)
 
         console.print(table)
 
+        if not full_id:
+            console.print(f"\n[dim]Tip: Use --full-id to show complete document IDs for use with --document.[/dim]")
+
+    except LocalCacheError as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] {str(e)}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def reset(
+    document: Optional[str] = typer.Option(
+        None,
+        "--document",
+        "-d",
+        help="Reset sync state for a specific document by ID. "
+        "Use 'remarkawise list-documents --full-id' to find document IDs.",
+    ),
+    all_docs: bool = typer.Option(
+        False,
+        "--all",
+        "-a",
+        help="Reset sync state for ALL documents. This will cause all highlights "
+        "to be re-synced on the next sync.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Skip confirmation prompt (use with caution).",
+    ),
+) -> None:
+    """Reset sync state to re-sync highlights.
+
+    This command clears the local sync tracking database, which allows highlights
+    to be synced again. This is useful when:
+
+    \b
+    - You want to re-upload all highlights to Readwise
+    - The sync state has become corrupted or out of sync
+    - You've manually deleted highlights from Readwise and want to re-sync them
+
+    \b
+    IMPORTANT NOTES:
+    - This does NOT delete highlights from Readwise
+    - This does NOT delete highlights from your reMarkable
+    - This only clears the local tracking of what has been synced
+    - After reset, running 'sync' will re-upload all highlights as new
+
+    \b
+    EXAMPLES:
+        # Reset a specific document (get ID from list-documents --full-id)
+        remarkawise reset --document 1d56bc1c-5ed1-45eb-9c45-e7e00be73973
+
+        # Reset all documents (will prompt for confirmation)
+        remarkawise reset --all
+
+        # Reset all without confirmation (for scripts)
+        remarkawise reset --all --yes
+    """
+    # Validate options
+    if not document and not all_docs:
+        console.print(
+            "[red]Error:[/red] You must specify either --document or --all.\n\n"
+            "Examples:\n"
+            "  remarkawise reset --document <document-id>\n"
+            "  remarkawise reset --all"
+        )
+        raise typer.Exit(1)
+
+    if document and all_docs:
+        console.print(
+            "[red]Error:[/red] Cannot use both --document and --all. "
+            "Choose one option."
+        )
+        raise typer.Exit(1)
+
+    try:
+        state_manager = StateManager(settings.sync_state_path)
+
+        if document:
+            # Reset specific document
+            existing = state_manager.get_sync_state(document)
+            if not existing:
+                console.print(
+                    f"[yellow]No sync state found for document:[/yellow] {document}\n\n"
+                    "This document may have never been synced, or the ID may be incorrect.\n"
+                    "Use 'remarkawise list-documents --full-id' to find valid document IDs."
+                )
+                state_manager.close()
+                raise typer.Exit(1)
+
+            # Show what will be reset
+            console.print(f"\n[bold]Document to reset:[/bold]")
+            console.print(f"  Name: {existing.document_name}")
+            console.print(f"  ID: {document}")
+            console.print(f"  Highlights tracked: {existing.highlight_count}")
+            console.print(f"  Last synced: {existing.last_synced_at.strftime('%Y-%m-%d %H:%M')}")
+
+            if not yes:
+                confirm = typer.confirm(
+                    "\nReset sync state for this document? "
+                    "(Highlights will be re-synced on next sync)"
+                )
+                if not confirm:
+                    console.print("[dim]Cancelled.[/dim]")
+                    state_manager.close()
+                    raise typer.Exit(0)
+
+            state_manager.reset_document(document)
+            state_manager.close()
+
+            console.print(
+                f"\n[green]Reset complete![/green] "
+                f"Sync state cleared for '{existing.document_name}'.\n"
+                f"Run 'remarkawise sync --document {document}' to re-sync highlights."
+            )
+
+        else:
+            # Reset all documents
+            stats = state_manager.get_stats()
+            doc_count = stats["documents_synced"]
+            highlight_count = stats["highlights_synced"]
+
+            if doc_count == 0:
+                console.print("[dim]No sync state to reset. Nothing has been synced yet.[/dim]")
+                state_manager.close()
+                raise typer.Exit(0)
+
+            console.print(f"\n[bold yellow]Warning: This will reset ALL sync state![/bold yellow]")
+            console.print(f"\n  Documents tracked: {doc_count}")
+            console.print(f"  Highlights tracked: {highlight_count}")
+            console.print(
+                "\n[dim]This will NOT delete highlights from Readwise, "
+                "but will cause all highlights to be re-uploaded on next sync.[/dim]"
+            )
+
+            if not yes:
+                confirm = typer.confirm(
+                    "\nAre you sure you want to reset ALL sync state?"
+                )
+                if not confirm:
+                    console.print("[dim]Cancelled.[/dim]")
+                    state_manager.close()
+                    raise typer.Exit(0)
+
+            reset_count = state_manager.reset_all()
+            state_manager.close()
+
+            console.print(
+                f"\n[green]Reset complete![/green] "
+                f"Cleared sync state for {reset_count} document(s).\n"
+                "Run 'remarkawise sync' to re-sync all highlights."
+            )
+
+    except typer.Exit:
+        raise
     except Exception as e:
         console.print(f"[red]Error:[/red] {str(e)}")
         raise typer.Exit(1)

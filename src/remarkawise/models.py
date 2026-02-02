@@ -83,6 +83,7 @@ class SyncResult(BaseModel):
     success: bool = Field(description="Whether sync completed successfully")
     documents_processed: int = Field(default=0, description="Number of documents processed")
     highlights_synced: int = Field(default=0, description="Number of highlights synced")
+    highlights_deleted: int = Field(default=0, description="Number of highlights deleted")
     errors: list[str] = Field(default_factory=list, description="Any errors encountered")
     started_at: datetime = Field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = Field(default=None)

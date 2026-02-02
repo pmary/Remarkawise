@@ -183,12 +183,13 @@ class PDFHighlightExtractor:
         """Extract metadata from the PDF.
 
         Returns:
-            Dictionary with title, author, and other metadata
+            Dictionary with title, author, and other metadata.
+            Title may be None if not present in PDF metadata.
         """
         metadata = self.doc.metadata
 
         return {
-            "title": metadata.get("title") or self.pdf_path.stem,
+            "title": metadata.get("title") or None,
             "author": metadata.get("author"),
             "subject": metadata.get("subject"),
             "creator": metadata.get("creator"),

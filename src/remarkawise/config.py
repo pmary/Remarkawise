@@ -1,10 +1,18 @@
 """Configuration management for Remarkawise."""
 
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class DataSource(str, Enum):
+    """Source for reMarkable documents."""
+
+    CLOUD = "cloud"  # Use reMarkable Cloud API
+    LOCAL = "local"  # Use local desktop app cache
 
 
 class Settings(BaseSettings):
@@ -14,6 +22,18 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+    )
+
+    # Data source setting
+    remarkable_source: DataSource = Field(
+        default=DataSource.LOCAL,
+        description="Source for reMarkable documents: 'cloud' or 'local'",
+    )
+
+    # Local cache path (optional override)
+    remarkable_local_cache_path: Optional[Path] = Field(
+        default=None,
+        description="Custom path to reMarkable desktop app cache",
     )
 
     # reMarkable Cloud settings

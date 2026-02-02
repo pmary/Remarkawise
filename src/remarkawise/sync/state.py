@@ -54,6 +54,7 @@ class StateManager:
                 document_id TEXT NOT NULL,
                 text_hash TEXT NOT NULL,
                 synced_at TEXT NOT NULL,
+                readwise_id INTEGER,
                 FOREIGN KEY (document_id) REFERENCES sync_state(document_id)
             );
 
@@ -62,6 +63,23 @@ class StateManager:
         """
         )
         conn.commit()
+
+        # Run migrations for existing databases
+        self._migrate_schema()
+
+    def _migrate_schema(self) -> None:
+        """Run schema migrations for existing databases."""
+        conn = self._get_conn()
+
+        # Check if readwise_id column exists
+        cursor = conn.execute("PRAGMA table_info(synced_highlights)")
+        columns = {row[1] for row in cursor.fetchall()}
+
+        if "readwise_id" not in columns:
+            conn.execute(
+                "ALTER TABLE synced_highlights ADD COLUMN readwise_id INTEGER"
+            )
+            conn.commit()
 
     def close(self) -> None:
         """Close the database connection."""
@@ -138,26 +156,32 @@ class StateManager:
         return cursor.fetchone() is not None
 
     def mark_highlights_synced(
-        self, document_id: str, highlights: list[Highlight]
+        self,
+        document_id: str,
+        highlights: list[Highlight],
+        readwise_ids: Optional[dict[str, int]] = None,
     ) -> None:
         """Mark multiple highlights as synced.
 
         Args:
             document_id: Document the highlights belong to
             highlights: List of highlights to mark
+            readwise_ids: Optional mapping of highlight text hash to Readwise ID
         """
         conn = self._get_conn()
         now = datetime.utcnow().isoformat()
+        readwise_ids = readwise_ids or {}
 
         for highlight in highlights:
             text_hash = hashlib.sha256(highlight.text.encode()).hexdigest()[:32]
+            readwise_id = readwise_ids.get(text_hash)
             conn.execute(
                 """
                 INSERT OR REPLACE INTO synced_highlights
-                (highlight_id, document_id, text_hash, synced_at)
-                VALUES (?, ?, ?, ?)
+                (highlight_id, document_id, text_hash, synced_at, readwise_id)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (highlight.id, document_id, text_hash, now),
+                (highlight.id, document_id, text_hash, now, readwise_id),
             )
 
         conn.commit()
@@ -175,6 +199,70 @@ class StateManager:
             List of highlights not yet synced
         """
         return [h for h in highlights if not self.is_highlight_synced(h.id)]
+
+    def get_synced_highlights_for_document(
+        self, document_id: str
+    ) -> list[dict[str, any]]:
+        """Get all synced highlights for a document.
+
+        Args:
+            document_id: Document ID
+
+        Returns:
+            List of dicts with highlight_id, text_hash, and readwise_id
+        """
+        conn = self._get_conn()
+        cursor = conn.execute(
+            """
+            SELECT highlight_id, text_hash, readwise_id
+            FROM synced_highlights
+            WHERE document_id = ?
+            """,
+            (document_id,),
+        )
+
+        return [
+            {
+                "highlight_id": row["highlight_id"],
+                "text_hash": row["text_hash"],
+                "readwise_id": row["readwise_id"],
+            }
+            for row in cursor.fetchall()
+        ]
+
+    def get_deleted_highlights(
+        self, document_id: str, current_highlights: list[Highlight]
+    ) -> list[dict[str, any]]:
+        """Find highlights that were synced but are no longer on the device.
+
+        Args:
+            document_id: Document ID
+            current_highlights: List of highlights currently on the device
+
+        Returns:
+            List of dicts with highlight_id, text_hash, and readwise_id for deleted highlights
+        """
+        current_ids = {h.id for h in current_highlights}
+        synced = self.get_synced_highlights_for_document(document_id)
+
+        return [h for h in synced if h["highlight_id"] not in current_ids]
+
+    def remove_highlights(self, highlight_ids: list[str]) -> None:
+        """Remove highlights from sync tracking.
+
+        Args:
+            highlight_ids: List of highlight IDs to remove
+        """
+        if not highlight_ids:
+            return
+
+        conn = self._get_conn()
+        placeholders = ",".join("?" * len(highlight_ids))
+        conn.execute(
+            f"DELETE FROM synced_highlights WHERE highlight_id IN ({placeholders})",
+            highlight_ids,
+        )
+        conn.commit()
 
     def needs_sync(self, document_id: str, current_version: int) -> bool:
         """Check if a document needs to be synced.
@@ -255,3 +343,53 @@ class StateManager:
             "highlights_synced": highlight_count,
             "total_highlights": total_highlights or 0,
         }
+
+    def reset_document(self, document_id: str) -> bool:
+        """Reset sync state for a specific document.
+
+        Args:
+            document_id: Document ID to reset
+
+        Returns:
+            True if document was found and reset, False if not found
+        """
+        conn = self._get_conn()
+
+        # Check if document exists
+        cursor = conn.execute(
+            "SELECT 1 FROM sync_state WHERE document_id = ?",
+            (document_id,),
+        )
+        if cursor.fetchone() is None:
+            return False
+
+        # Delete highlights first (foreign key)
+        conn.execute(
+            "DELETE FROM synced_highlights WHERE document_id = ?",
+            (document_id,),
+        )
+        # Delete document state
+        conn.execute(
+            "DELETE FROM sync_state WHERE document_id = ?",
+            (document_id,),
+        )
+        conn.commit()
+        return True
+
+    def reset_all(self) -> int:
+        """Reset all sync state.
+
+        Returns:
+            Number of documents that were reset
+        """
+        conn = self._get_conn()
+
+        # Get count before deletion
+        doc_count = conn.execute("SELECT COUNT(*) FROM sync_state").fetchone()[0]
+
+        # Delete all data
+        conn.execute("DELETE FROM synced_highlights")
+        conn.execute("DELETE FROM sync_state")
+        conn.commit()
+
+        return doc_count

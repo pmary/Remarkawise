@@ -268,3 +268,92 @@ class TestSyncedDocuments:
 
         assert stats["documents_synced"] == 0
         assert stats["total_highlights"] == 0
+
+
+class TestDeletionTracking:
+    """Tests for highlight deletion tracking."""
+
+    def test_mark_highlights_with_readwise_ids(
+        self, state_manager: StateManager, sample_highlights: list[Highlight]
+    ) -> None:
+        """Test marking highlights with Readwise IDs."""
+        import hashlib
+
+        # Create readwise_ids mapping
+        readwise_ids = {}
+        for i, hl in enumerate(sample_highlights):
+            text_hash = hashlib.sha256(hl.text.encode()).hexdigest()[:32]
+            readwise_ids[text_hash] = 1000 + i
+
+        state_manager.mark_highlights_synced("doc-123", sample_highlights, readwise_ids)
+
+        # Verify highlights are synced
+        for hl in sample_highlights:
+            assert state_manager.is_highlight_synced(hl.id) is True
+
+        # Verify Readwise IDs are stored
+        synced = state_manager.get_synced_highlights_for_document("doc-123")
+        assert len(synced) == 3
+
+        for i, hl_data in enumerate(synced):
+            assert hl_data["readwise_id"] is not None
+
+    def test_get_synced_highlights_for_document(
+        self, state_manager: StateManager, sample_highlights: list[Highlight]
+    ) -> None:
+        """Test getting synced highlights for a document."""
+        state_manager.mark_highlights_synced("doc-123", sample_highlights)
+
+        synced = state_manager.get_synced_highlights_for_document("doc-123")
+
+        assert len(synced) == 3
+        highlight_ids = {s["highlight_id"] for s in synced}
+        for hl in sample_highlights:
+            assert hl.id in highlight_ids
+
+    def test_get_synced_highlights_empty(self, state_manager: StateManager) -> None:
+        """Test getting synced highlights when none exist."""
+        synced = state_manager.get_synced_highlights_for_document("nonexistent")
+        assert synced == []
+
+    def test_get_deleted_highlights(
+        self, state_manager: StateManager, sample_highlights: list[Highlight]
+    ) -> None:
+        """Test detecting deleted highlights."""
+        # Sync all highlights
+        state_manager.mark_highlights_synced("doc-123", sample_highlights)
+
+        # Current highlights (missing the first one)
+        current = sample_highlights[1:]
+
+        deleted = state_manager.get_deleted_highlights("doc-123", current)
+
+        assert len(deleted) == 1
+        assert deleted[0]["highlight_id"] == sample_highlights[0].id
+
+    def test_get_deleted_highlights_none(
+        self, state_manager: StateManager, sample_highlights: list[Highlight]
+    ) -> None:
+        """Test when no highlights have been deleted."""
+        state_manager.mark_highlights_synced("doc-123", sample_highlights)
+
+        deleted = state_manager.get_deleted_highlights("doc-123", sample_highlights)
+
+        assert len(deleted) == 0
+
+    def test_remove_highlights(
+        self, state_manager: StateManager, sample_highlights: list[Highlight]
+    ) -> None:
+        """Test removing highlights from tracking."""
+        state_manager.mark_highlights_synced("doc-123", sample_highlights)
+
+        # Remove first highlight
+        state_manager.remove_highlights([sample_highlights[0].id])
+
+        # Verify it's removed
+        assert state_manager.is_highlight_synced(sample_highlights[0].id) is False
+        assert state_manager.is_highlight_synced(sample_highlights[1].id) is True
+
+    def test_remove_highlights_empty_list(self, state_manager: StateManager) -> None:
+        """Test removing with empty list does nothing."""
+        state_manager.remove_highlights([])  # Should not raise
