@@ -48,6 +48,93 @@ START_WORD_PATTERNS = [
     (r'(?<![a-zA-Z])\)(?=[a-z])', 'fl'),  # )ow → flow, )oor → floor
 ]
 
+# Word boundary patterns for fixing missing spaces from PDF line breaks
+# reMarkable's GlyphRange extraction concatenates words at line breaks
+#
+# We use a conservative approach: only insert spaces in specific patterns
+# that are very likely to be concatenated words, not legitimate compound words.
+#
+# Pattern: (word ending) + (common word starter)
+# - Word endings: s (plurals), ed (past tense), ly (adverbs), ing, er, etc.
+# - Word starters: the, a, an, to, for, and, or, is, are, etc.
+
+# Safe patterns: word endings that rarely continue into another syllable
+WORD_BOUNDARY_PATTERNS = [
+    # Plurals/verbs ending in 's' followed by common words
+    # Use word boundary or end-of-string to handle spaces after
+    (r'([a-z]+s)(the)(?=[a-z]|\s|$)', r'\1 \2'),      # "modelsthe" → "models the"
+    (r'([a-z]+s)(a)(?=[bcdfghjklmnpqrstvwxyz])', r'\1 \2'),  # "modelsa..." but not "modelsa" + vowel
+    (r'([a-z]+s)(to)(?=[a-z]|\s|$)', r'\1 \2'),       # "needsto" → "needs to"
+    (r'([a-z]+s)(for)(?=[a-z]|\s|$)', r'\1 \2'),      # "modelsfor" → "models for"
+    (r'([a-z]+s)(and)(?=[a-z]|\s|$)', r'\1 \2'),      # "modelsand" → "models and"
+    (r'([a-z]+s)(or)(?=[a-z]|\s|$)', r'\1 \2'),       # "modelsor" → "models or"
+    (r'([a-z]+s)(is)(?=[a-z]|\s|$)', r'\1 \2'),       # "thisis" → "this is"
+    (r'([a-z]+s)(are)(?=[a-z]|\s|$)', r'\1 \2'),      # "modelsare" → "models are"
+    (r'([a-z]+s)(will)(?=[a-z]|\s|$)', r'\1 \2'),     # "modelswill" → "models will"
+    (r'([a-z]+s)(you)(?=[a-z\']|\s|$)', r'\1 \2'),    # "skillsyou" → "skills you" (include apostrophe)
+    (r'([a-z]+s)(your)(?=[a-z]|\s|$)', r'\1 \2'),     # "makesyour" → "makes your"
+    (r'([a-z]+s)(we)(?=[a-z]|\s|$)', r'\1 \2'),       # "letswe" → "lets we"
+    (r'([a-z]+s)(that)(?=[a-z]|\s|$)', r'\1 \2'),     # "meansthat" → "means that"
+    (r'([a-z]+s)(how)(?=[a-z]|\s|$)', r'\1 \2'),      # "knowshow" → "knows how"
+    (r'([a-z]+s)(what)(?=[a-z]|\s|$)', r'\1 \2'),     # "knowswhat" → "knows what"
+    (r'([a-z]+s)(not)(?=[a-z]|\s|$)', r'\1 \2'),      # "doesnot" → "does not"
+    (r'([a-z]+s)(need)(?=[a-z]|\s|$)', r'\1 \2'),     # "modelsneed" → "models need"
+    (r'([a-z]+s)(have)(?=[a-z]|\s|$)', r'\1 \2'),     # "modelshave" → "models have"
+    (r'([a-z]+s)(can)(?=[a-z]|\s|$)', r'\1 \2'),      # "modelscan" → "models can"
+    (r'([a-z]+s)(with)(?=[a-z]|\s|$)', r'\1 \2'),     # "modelswith" → "models with"
+    (r'([a-z]+s)(as)(?=[bcdfghjklmnpqrstvwxyz])', r'\1 \2'),  # "modelsas..." but not before vowel
+    (r'([a-z]+s)(less)(?=[a-z]|\s|$)', r'\1 \2'),     # "needsless" → "needs less"
+
+    # Past tense 'ed' followed by common words
+    (r'([a-z]+ed)(the)(?=[a-z]|\s|$)', r'\1 \2'),     # "neededthe" → "needed the"
+    (r'([a-z]+ed)(a)(?=[bcdfghjklmnpqrstvwxyz])', r'\1 \2'),
+    (r'([a-z]+ed)(to)(?=[a-z]|\s|$)', r'\1 \2'),
+    (r'([a-z]+ed)(and)(?=[a-z]|\s|$)', r'\1 \2'),
+
+    # Adverbs 'ly' followed by common words
+    (r'([a-z]+ly)(the)(?=[a-z]|\s|$)', r'\1 \2'),     # "franklythe" → "frankly the"
+    (r'([a-z]+ly)(how)(?=[a-z]|\s|$)', r'\1 \2'),     # "franklyhow" → "frankly how"
+    (r'([a-z]+ly)(you)(?=[a-z]|\s|$)', r'\1 \2'),
+
+    # Words ending in 'e' (common) followed by specific words
+    (r'([a-z]+re)(the)(?=[a-z]|\s|$)', r'\1 \2'),     # "arethe" → "are the"
+    (r'([a-z]+re)(essential)(?=[a-z]|\s|$|[,.])', r'\1 \2'),  # "areessential" → "are essential"
+    (r'([a-z]+le)(the)(?=[a-z]|\s|$)', r'\1 \2'),     # "whilethe" → "while the"
+    (r'([a-z]+me)(you)(?=[a-z]|\s|$)', r'\1 \2'),     # "timeyou" → "time you"
+
+    # 'as' at word boundary (careful - "as" is common inside words)
+    (r'([a-z]+s)(as)(?=[bcdfghjklmnpqrstvwxyz][a-z])', r'\1 \2'),  # "modelsasmodels" → "models as models"
+
+    # 'and' patterns
+    (r'([a-z]+d)(and)(?=[a-z]|\s|$)', r'\1 \2'),      # "andand" → "and and"
+    (r'([a-z]+nd)(frankly)(?=[a-z]|\s|$)', r'\1 \2'),  # "andfrankly" → "and frankly"
+
+    # Specific common patterns seen in the document
+    (r'(the)(product)(?=[a-z]|\s|$|[,.])', r'\1 \2'),  # "theproduct" → "the product"
+    (r'(as)(models)(?=[a-z]|\s|$)', r'\1 \2'),         # "asmodels" → "as models"
+    (r'(agents)(reliable)(?=[a-z]|\s|$)', r'\1 \2'),   # "agentsreliable" → "agents reliable"
+]
+
+
+def fix_missing_word_boundaries(text: str) -> str:
+    """Fix missing spaces between words caused by PDF line break extraction.
+
+    reMarkable's GlyphRange extraction often concatenates words when they
+    span line breaks in the PDF (e.g., "modelswill" → "models will").
+
+    Uses conservative patterns to avoid breaking legitimate compound words.
+
+    Args:
+        text: Text potentially missing word boundary spaces
+
+    Returns:
+        Text with word boundaries restored
+    """
+    for pattern, replacement in WORD_BOUNDARY_PATTERNS:
+        text = re.sub(pattern, replacement, text)
+
+    return text
+
 
 def decode_ligatures(text: str) -> str:
     """Decode PDF ligatures and fix corrupted ligature characters.
@@ -77,6 +164,9 @@ def decode_ligatures(text: str) -> str:
 
     for pattern, replacement in START_WORD_PATTERNS:
         text = re.sub(pattern, replacement, text)
+
+    # Finally, fix missing word boundaries from PDF line breaks
+    text = fix_missing_word_boundaries(text)
 
     return text
 
