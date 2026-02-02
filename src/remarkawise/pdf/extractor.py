@@ -5,6 +5,7 @@ annotations from reMarkable devices.
 """
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Optional
 from uuid import uuid4
@@ -24,12 +25,40 @@ LIGATURE_MAP = {
     "\ufb06": "st",   # ﬆ
 }
 
+# Corrupted ligature patterns from PDFs with broken font mappings
+# These appear when fonts lack proper ToUnicode CMap entries
+# The pattern is: corrupted_char -> (likely_ligature, context_pattern)
+# We use regex to only replace when the character appears within a word
+
+# Common corrupted ligature mappings (vary by PDF font)
+# Pattern: character that appears in middle of words where ligature would be
+CORRUPTED_LIGATURE_PATTERNS = [
+    # (pattern, replacement) - pattern matches corrupted char surrounded by letters
+    (r'(?<=[a-zA-Z])\+(?=[a-zA-Z])', 'fi'),   # + in word = fi (e.g., "ef+cient" → "efficient")
+    (r'(?<=[a-zA-Z]),(?=[a-zA-Z])', 'ff'),    # , in word = ff (e.g., "sca,olding" → "scaffolding")
+    (r'(?<=[a-zA-Z])\)(?=[a-zA-Z])', 'fl'),   # ) in word = fl (e.g., "work)ows" → "workflows")
+    (r'(?<=[a-zA-Z])\((?=[a-zA-Z])', 'ffi'),  # ( in word = ffi
+    (r'(?<=[a-zA-Z])\*(?=[a-zA-Z])', 'ffl'),  # * in word = ffl
+    (r'(?<=[a-z])I(?=[a-z])', 'ff'),          # I between lowercase = ff (e.g., "diIerent" → "different")
+]
+
+# Also handle start-of-word ligatures (common with fi/fl)
+START_WORD_PATTERNS = [
+    (r'(?<![a-zA-Z])\+(?=[a-z])', 'fi'),  # +nancial → financial, +le → file
+    (r'(?<![a-zA-Z])\)(?=[a-z])', 'fl'),  # )ow → flow, )oor → floor
+]
+
 
 def decode_ligatures(text: str) -> str:
-    """Decode PDF ligatures to their decomposed forms.
+    """Decode PDF ligatures and fix corrupted ligature characters.
 
     PDFs often use typographic ligatures (fi, fl, ff, etc.) as single
-    Unicode characters. This function converts them back to separate letters.
+    Unicode characters. Some PDFs with broken font mappings extract
+    ligatures as wrong ASCII characters (e.g., "fi" as "+").
+
+    This function handles both cases:
+    1. Unicode ligatures (U+FB00-U+FB06) → component letters
+    2. Corrupted ASCII chars in word context → likely ligatures
 
     Args:
         text: Text potentially containing ligature characters
@@ -37,8 +66,18 @@ def decode_ligatures(text: str) -> str:
     Returns:
         Text with ligatures replaced by their component letters
     """
+    # First, handle proper Unicode ligatures
     for ligature, replacement in LIGATURE_MAP.items():
         text = text.replace(ligature, replacement)
+
+    # Then, fix corrupted ligature patterns (ASCII chars that should be ligatures)
+    # Only replace when the character appears within a word context
+    for pattern, replacement in CORRUPTED_LIGATURE_PATTERNS:
+        text = re.sub(pattern, replacement, text)
+
+    for pattern, replacement in START_WORD_PATTERNS:
+        text = re.sub(pattern, replacement, text)
+
     return text
 
 
