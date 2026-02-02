@@ -142,6 +142,9 @@ class LocalCacheClient:
         except (ValueError, OSError):
             modified_time = datetime.utcnow()
 
+        # Read tags from .content file
+        tags = self._read_document_tags(doc_id)
+
         return RemarkableDocument(
             id=doc_id,
             name=metadata.get("visibleName", "Untitled"),
@@ -149,7 +152,38 @@ class LocalCacheClient:
             parent_id=metadata.get("parent"),
             modified_time=modified_time,
             version=1,  # Local cache doesn't track versions the same way
+            tags=tags,
         )
+
+    def _read_document_tags(self, doc_id: str) -> list[str]:
+        """Read tags from a document's .content file.
+
+        Args:
+            doc_id: Document ID
+
+        Returns:
+            List of tag names
+        """
+        content_file = self.cache_path / f"{doc_id}.content"
+        if not content_file.exists():
+            return []
+
+        try:
+            with open(content_file) as f:
+                content = json.load(f)
+
+            # Tags are stored as a list in the .content file
+            # Each tag may be a string or an object with a "name" field
+            raw_tags = content.get("tags", [])
+            tags = []
+            for tag in raw_tags:
+                if isinstance(tag, str):
+                    tags.append(tag)
+                elif isinstance(tag, dict) and "name" in tag:
+                    tags.append(tag["name"])
+            return tags
+        except (json.JSONDecodeError, KeyError):
+            return []
 
     def download_document(self, doc_id: str, output_dir: Path) -> Path:
         """Copy a document from the cache to the output directory.

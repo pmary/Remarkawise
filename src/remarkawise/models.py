@@ -24,6 +24,7 @@ class RemarkableDocument(BaseModel):
     parent_id: Optional[str] = Field(default=None, description="Parent folder ID")
     modified_time: datetime = Field(description="Last modification time")
     version: int = Field(default=1, description="Document version")
+    tags: list[str] = Field(default_factory=list, description="Document tags/labels")
 
     # Populated after download
     file_path: Optional[str] = Field(default=None, description="Local path to downloaded file")

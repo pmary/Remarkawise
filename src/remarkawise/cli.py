@@ -59,6 +59,12 @@ def sync(
         "-d",
         help="Sync only a specific document by ID.",
     ),
+    tag: Optional[str] = typer.Option(
+        None,
+        "--tag",
+        "-t",
+        help="Sync only documents with this tag (e.g., 'readwise').",
+    ),
     source: Optional[str] = typer.Option(
         None,
         "--source",
@@ -76,6 +82,9 @@ def sync(
 
     Extracts highlights from reMarkable documents and uploads them to Readwise.
     By default, uses the local desktop app cache. Use --source=cloud for API.
+
+    Use --tag to filter by document tags (e.g., --tag=readwise to only sync
+    documents tagged with 'readwise' on your reMarkable).
     """
     # Override source if specified
     effective_source = settings.remarkable_source
@@ -106,7 +115,8 @@ def sync(
         raise typer.Exit(1)
 
     source_label = "local cache" if effective_source == DataSource.LOCAL else "cloud"
-    console.print(f"[bold]Starting sync from {source_label}...[/bold]")
+    tag_info = f" (filtering by tag: '{tag}')" if tag else ""
+    console.print(f"[bold]Starting sync from {source_label}{tag_info}...[/bold]")
 
     try:
         # Create settings copy with effective source
@@ -121,12 +131,13 @@ def sync(
         )
         engine = SyncEngine(sync_settings, verbose=verbose)
         document_ids = [document] if document else None
+        filter_tag = tag
 
         if verbose:
-            result = engine.sync(force=force, document_ids=document_ids)
+            result = engine.sync(force=force, document_ids=document_ids, tag=filter_tag)
         else:
             with console.status("[bold green]Syncing highlights..."):
-                result = engine.sync(force=force, document_ids=document_ids)
+                result = engine.sync(force=force, document_ids=document_ids, tag=filter_tag)
 
         # Get total stats before closing
         total_stats = engine.get_status()
@@ -363,16 +374,19 @@ def list_documents(
         table.add_column("Name", style="cyan")
         if all_types:
             table.add_column("Type")
+        table.add_column("Tags", style="yellow")
         table.add_column("Modified")
 
         for doc in filtered_docs:
             doc_id_display = doc.id if full_id else doc.id[:8] + "..."
+            tags_display = ", ".join(doc.tags) if doc.tags else "-"
             row = [
                 doc_id_display,
                 doc.name[:50],
             ]
             if all_types:
                 row.append(doc.document_type.value)
+            row.append(tags_display)
             row.append(doc.modified_time.strftime("%Y-%m-%d %H:%M"))
             table.add_row(*row)
 
@@ -380,6 +394,7 @@ def list_documents(
 
         if not full_id:
             console.print(f"\n[dim]Tip: Use --full-id to show complete document IDs for use with --document.[/dim]")
+            console.print(f"[dim]Tip: Use --tag=<name> with sync to filter by tag.[/dim]")
 
     except LocalCacheError as e:
         console.print(f"[red]Error:[/red] {str(e)}")

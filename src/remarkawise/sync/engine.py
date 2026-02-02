@@ -98,12 +98,14 @@ class SyncEngine:
         self,
         force: bool = False,
         document_ids: Optional[list[str]] = None,
+        tag: Optional[str] = None,
     ) -> SyncResult:
         """Run the synchronization process.
 
         Args:
             force: Force re-sync of all documents, ignoring state
             document_ids: Optional list of specific document IDs to sync
+            tag: Optional tag to filter documents by
 
         Returns:
             SyncResult with statistics and any errors
@@ -124,7 +126,15 @@ class SyncEngine:
             if document_ids:
                 syncable_docs = [d for d in syncable_docs if d.id in document_ids]
 
-            # Filter to specific documents if requested, but always check for new highlights
+            # Filter by tag if specified
+            if tag:
+                tag_lower = tag.lower()
+                syncable_docs = [
+                    d for d in syncable_docs
+                    if any(t.lower() == tag_lower for t in d.tags)
+                ]
+                self._log(f"Filtered to {len(syncable_docs)} documents with tag '{tag}'")
+
             # Note: We don't filter by version because adding highlights doesn't change
             # the document version on reMarkable. Instead, we check for unsynced
             # highlights in _sync_document.
