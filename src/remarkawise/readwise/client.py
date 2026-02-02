@@ -373,6 +373,7 @@ def convert_to_readwise_highlights(
     document_title: str,
     author: Optional[str] = None,
     source_url: Optional[str] = None,
+    category: str = "books",
 ) -> list[ReadwiseHighlight]:
     """Convert internal Highlight objects to Readwise format.
 
@@ -381,6 +382,7 @@ def convert_to_readwise_highlights(
         document_title: Title of the source document
         author: Author of the document
         source_url: URL to the source (optional)
+        category: Readwise category (books, articles, etc.)
 
     Returns:
         List of ReadwiseHighlight objects ready for API upload
@@ -396,7 +398,7 @@ def convert_to_readwise_highlights(
             title=document_title,
             author=effective_author,
             source_type="remarkawise",
-            category="books",
+            category=category,
             location=hl.page_number,
             location_type="page",
             highlighted_at=hl.created_at,

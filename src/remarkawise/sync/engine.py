@@ -217,11 +217,16 @@ class SyncEngine:
         with PDFHighlightExtractor(pdf_path) as extractor:
             metadata = extractor.get_document_metadata()
 
+        # Determine Readwise category from document tags
+        category = self._get_category_from_tags(doc.tags)
+        self._log(f"  Category: {category}")
+
         # Convert to Readwise format
         rw_highlights = convert_to_readwise_highlights(
             highlights_to_sync,
             document_title=metadata.get("title") or doc.name,
             author=metadata.get("author"),
+            category=category,
         )
 
         # Upload to Readwise with retry on rate limit
@@ -452,6 +457,26 @@ class SyncEngine:
 
         # Default to page 0 if we can't determine
         return 0
+
+    def _get_category_from_tags(self, tags: list[str]) -> str:
+        """Determine Readwise category from document tags.
+
+        Supported tags (case-insensitive):
+        - 'article' -> 'articles' (Readwise Articles tab)
+        - 'book' -> 'books' (Readwise Books tab)
+
+        Args:
+            tags: List of document tags
+
+        Returns:
+            Readwise category string
+        """
+        tags_lower = [t.lower() for t in tags]
+        if "article" in tags_lower:
+            return "articles"
+        if "book" in tags_lower:
+            return "books"
+        return "books"  # default
 
     def _upload_with_retry(
         self,

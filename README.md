@@ -10,6 +10,7 @@ Sync highlights from your reMarkable Paper Pro to Readwise Reader.
 - **PDF text extraction**: Maps highlight regions to actual text content using PyMuPDF
 - **Native PDF highlights**: Also syncs highlights embedded directly in PDFs
 - **Tag filtering**: Sync only documents tagged with a specific tag (e.g., "readwise")
+- **Content category**: Control whether highlights appear in Readwise Books or Articles tab via tags
 - **Incremental sync**: Only syncs new highlights (existing highlights are not re-uploaded)
 - **Deletion sync**: Removes highlights from Readwise when deleted on reMarkable
 - **State tracking**: Remembers what has been synced to avoid duplicates
@@ -111,6 +112,16 @@ You can tag documents on your reMarkable and only sync documents with a specific
 4. Use `remarkawise sync --tag readwise` to only sync tagged documents
 
 This is useful if you only want certain documents to sync to Readwise.
+
+#### Setting content category
+
+Control where synced highlights appear in Readwise (Books or Articles tab):
+
+- Tag a document with `article` → highlights appear in **Articles** tab
+- Tag a document with `book` → highlights appear in **Books** tab
+- No category tag → defaults to **Books** tab
+
+Tag matching is case-insensitive. You can combine category tags with filter tags (e.g., tag a document with both `readwise` and `article`).
 
 ### View status
 
