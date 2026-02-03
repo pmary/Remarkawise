@@ -113,6 +113,10 @@ WORD_BOUNDARY_PATTERNS = [
     (r'(the)(product)(?=[a-z]|\s|$|[,.])', r'\1 \2'),  # "theproduct" → "the product"
     (r'(as)(models)(?=[a-z]|\s|$)', r'\1 \2'),         # "asmodels" → "as models"
     (r'(agents)(reliable)(?=[a-z]|\s|$)', r'\1 \2'),   # "agentsreliable" → "agents reliable"
+
+    # Lowercase followed by uppercase (acronyms, proper nouns, new sentences)
+    # This catches cases like "elaborateRAG" → "elaborate RAG"
+    (r'([a-z])([A-Z])', r'\1 \2'),
 ]
 
 
