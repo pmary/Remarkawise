@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from remarkawise.config import DataSource, Settings
+from remarkawise.config import Settings
 from remarkawise.models import (
     DocumentType,
     Highlight,
@@ -21,16 +21,12 @@ from remarkawise.readwise.client import (
     ReadwiseRateLimitError,
     convert_to_readwise_highlights,
 )
-from remarkawise.remarkable.client import RemarkableClient
 from remarkawise.remarkable.local_cache import LocalCacheClient
 from remarkawise.remarkable.parser import HighlightParser
 from remarkawise.sync.state import StateManager
 
 if TYPE_CHECKING:
     from remarkawise.llm.cleanup import LLMTextCleaner
-
-# Type alias for both client types
-RemarkableClientType = RemarkableClient | LocalCacheClient
 
 
 class SyncEngine:
@@ -39,7 +35,7 @@ class SyncEngine:
     def __init__(
         self,
         settings: Settings,
-        remarkable_client: Optional[RemarkableClientType] = None,
+        remarkable_client: Optional[LocalCacheClient] = None,
         readwise_client: Optional[ReadwiseClient] = None,
         state_manager: Optional[StateManager] = None,
         verbose: bool = False,
@@ -49,7 +45,7 @@ class SyncEngine:
 
         Args:
             settings: Application settings
-            remarkable_client: Optional pre-configured reMarkable client (cloud or local)
+            remarkable_client: Optional pre-configured local cache client
             readwise_client: Optional pre-configured Readwise client
             state_manager: Optional pre-configured state manager
             verbose: Enable verbose logging
@@ -141,21 +137,12 @@ class SyncEngine:
             return highlights
 
     @property
-    def remarkable_client(self) -> RemarkableClientType:
-        """Get or create the reMarkable client based on configured data source."""
+    def remarkable_client(self) -> LocalCacheClient:
+        """Get or create the reMarkable local cache client."""
         if self._rm_client is None:
-            if self.settings.remarkable_source == DataSource.LOCAL:
-                self._rm_client = LocalCacheClient(
-                    cache_path=self.settings.remarkable_local_cache_path
-                )
-            else:
-                if not self.settings.remarkable_device_token:
-                    raise ValueError(
-                        "reMarkable device token not configured. "
-                        "Run 'remarkawise auth remarkable' first, "
-                        "or set REMARKABLE_SOURCE=local to use local cache."
-                    )
-                self._rm_client = RemarkableClient(self.settings.remarkable_device_token)
+            self._rm_client = LocalCacheClient(
+                cache_path=self.settings.remarkable_local_cache_path
+            )
         return self._rm_client
 
     @property

@@ -4,7 +4,7 @@ Sync highlights from your reMarkable Paper Pro to Readwise Reader.
 
 ## Features
 
-- **Local-first**: Reads directly from the reMarkable desktop app cache (no cloud API dependency)
+- **Local-first**: Reads directly from the reMarkable desktop app cache (no cloud API needed)
 - **PDF & EPUB support**: Syncs highlights from both PDFs and EPUBs (including web articles saved via browser extension)
 - **Automatic highlight extraction**: Extracts highlights from reMarkable's annotation files (`.rm` format)
 - **PDF text extraction**: Maps highlight regions to actual text content using PyMuPDF
@@ -15,6 +15,11 @@ Sync highlights from your reMarkable Paper Pro to Readwise Reader.
 - **Deletion sync**: Removes highlights from Readwise when deleted on reMarkable
 - **State tracking**: Remembers what has been synced to avoid duplicates
 - **LLM text cleanup** (optional): Uses Claude AI to fix corrupted text from PDF extraction
+
+## Requirements
+
+- reMarkable desktop app installed and synced
+- Readwise account with API access
 
 ## Installation
 
@@ -32,18 +37,7 @@ pip install -e ".[dev]"
 
 ## Configuration
 
-### 1. Choose your data source
-
-Remarkawise supports two ways to access your reMarkable documents:
-
-| Source | Description | Requirements |
-|--------|-------------|--------------|
-| `local` (default) | Reads from reMarkable desktop app cache | Desktop app installed and synced |
-| `cloud` | Uses reMarkable Cloud API | Device token (see below) |
-
-**Recommended:** Use `local` mode. It's faster, works offline, and doesn't depend on the unofficial cloud API.
-
-### 2. Set up Readwise access
+### 1. Set up Readwise access
 
 1. Get your Readwise access token from https://readwise.io/access_token
 2. Create your `.env` file:
@@ -56,38 +50,21 @@ cp .env.example .env
 Your `.env` file should look like:
 
 ```
-REMARKABLE_SOURCE=local
 READWISE_ACCESS_TOKEN=your_readwise_token_here
 ```
 
-### 3. Verify configuration
+### 2. Verify configuration
 
 ```bash
-remarkawise auth readwise
+remarkawise auth
 ```
-
-### (Optional) Cloud API access
-
-If you prefer to use the cloud API instead of the local cache:
-
-```bash
-remarkawise auth remarkable
-```
-
-This will guide you through the device registration process:
-1. Visit https://my.remarkable.com/device/desktop/connect
-2. Enter the one-time code shown on the website
-3. Save the device token to your `.env` file
-4. Set `REMARKABLE_SOURCE=cloud` in your `.env`
-
-**Note:** The cloud API is unofficial and may break if reMarkable changes their backend.
 
 ## Usage
 
 ### Sync highlights
 
 ```bash
-# Sync all new highlights (uses local cache by default)
+# Sync all new highlights
 remarkawise sync
 
 # Force re-sync everything
@@ -98,9 +75,6 @@ remarkawise sync --document <document-id>
 
 # Sync only documents with a specific tag
 remarkawise sync --tag readwise
-
-# Use cloud API instead of local cache
-remarkawise sync --source=cloud
 
 # Use LLM to fix corrupted text (requires ANTHROPIC_API_KEY)
 remarkawise sync --llm-cleanup
@@ -156,7 +130,7 @@ remarkawise status
 ### List documents
 
 ```bash
-# List syncable documents - PDFs and EPUBs (uses local cache by default)
+# List syncable documents - PDFs and EPUBs
 remarkawise list-documents
 
 # Show full document IDs (useful for --document flag)
@@ -164,9 +138,6 @@ remarkawise list-documents --full-id
 
 # Show all document types (including notebooks)
 remarkawise list-documents --all
-
-# Use cloud API instead of local cache
-remarkawise list-documents --source=cloud
 ```
 
 ### Reset sync state
@@ -188,7 +159,7 @@ remarkawise reset --all --yes
 
 ## How it works
 
-1. **Fetch documents**: Reads from local desktop app cache (or cloud API if configured)
+1. **Fetch documents**: Reads from the reMarkable desktop app local cache
 2. **Parse highlights**: Reads `.rm` files to find highlighter strokes and their coordinates
 3. **Extract text**: Uses PyMuPDF to extract the actual text content from highlight regions
 4. **Detect changes**: Compares current highlights against previously synced state
@@ -212,11 +183,7 @@ flowchart TB
 
     subgraph Remarkawise["Remarkawise"]
         CLI[CLI Interface]
-
-        subgraph Sources["Data Sources"]
-            LOCAL[Local Cache Client]
-            CLOUD[Cloud API Client]
-        end
+        LOCAL[Local Cache Client]
 
         subgraph Processing["Processing Pipeline"]
             PARSER[".rm Parser<br/>(rmscene)"]
@@ -237,10 +204,7 @@ flowchart TB
     RM_HL --> |sync| CACHE
 
     CACHE --> LOCAL
-    reMarkable -.-> |optional| CLOUD
-
     LOCAL --> ENGINE
-    CLOUD --> ENGINE
 
     ENGINE --> PARSER
     PARSER --> |"GlyphRange<br/>(Paper Pro)"| MERGE
@@ -307,7 +271,6 @@ src/remarkawise/
 ├── config.py           # Configuration management (Pydantic Settings)
 ├── models.py           # Data models (Pydantic)
 ├── remarkable/
-│   ├── client.py       # reMarkable Cloud API client
 │   ├── local_cache.py  # Local desktop app cache reader
 │   └── parser.py       # .rm file parser (rmscene for v6)
 ├── readwise/
@@ -324,7 +287,7 @@ src/remarkawise/
 ## Limitations
 
 - Supports PDF and EPUB documents (notebooks are not supported)
-- Requires the reMarkable desktop app to be installed and synced (for local mode)
+- Requires the reMarkable desktop app to be installed and synced
 - Handwritten annotations are not converted to text (only highlighter marks)
 
 ## Development

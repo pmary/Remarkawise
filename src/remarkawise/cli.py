@@ -1,6 +1,5 @@
 """Command-line interface for Remarkawise."""
 
-import sys
 from typing import Optional
 
 import typer
@@ -8,9 +7,8 @@ from rich.console import Console
 from rich.table import Table
 
 from remarkawise import __version__
-from remarkawise.config import DataSource, Settings, settings
+from remarkawise.config import Settings, settings
 from remarkawise.readwise.client import ReadwiseClient
-from remarkawise.remarkable.client import RemarkableClient
 from remarkawise.remarkable.local_cache import LocalCacheClient, LocalCacheError
 from remarkawise.sync.engine import SyncEngine
 from remarkawise.sync.state import StateManager
@@ -65,12 +63,6 @@ def sync(
         "-t",
         help="Sync only documents with this tag (e.g., 'readwise').",
     ),
-    source: Optional[str] = typer.Option(
-        None,
-        "--source",
-        "-s",
-        help="Data source: 'local' (desktop app cache) or 'cloud' (reMarkable API).",
-    ),
     llm_cleanup: bool = typer.Option(
         False,
         "--llm-cleanup",
@@ -85,8 +77,8 @@ def sync(
 ) -> None:
     """Sync highlights from reMarkable to Readwise.
 
-    Extracts highlights from reMarkable documents and uploads them to Readwise.
-    By default, uses the local desktop app cache. Use --source=cloud for API.
+    Extracts highlights from reMarkable documents (via desktop app cache)
+    and uploads them to Readwise.
 
     Use --tag to filter by document tags (e.g., --tag=readwise to only sync
     documents tagged with 'readwise' on your reMarkable).
@@ -94,27 +86,6 @@ def sync(
     Use --llm-cleanup to fix corrupted text using Claude AI (requires ANTHROPIC_API_KEY
     in your .env file). This fixes issues like missing spaces, broken ligatures, etc.
     """
-    # Override source if specified
-    effective_source = settings.remarkable_source
-    if source:
-        try:
-            effective_source = DataSource(source.lower())
-        except ValueError:
-            console.print(
-                f"[red]Error:[/red] Invalid source '{source}'. "
-                "Use 'local' or 'cloud'."
-            )
-            raise typer.Exit(1)
-
-    # Validate configuration based on source
-    if effective_source == DataSource.CLOUD and not settings.remarkable_device_token:
-        console.print(
-            "[red]Error:[/red] reMarkable not configured for cloud access. "
-            "Run 'remarkawise auth remarkable' first, "
-            "or use --source=local for local cache."
-        )
-        raise typer.Exit(1)
-
     if not settings.readwise_access_token:
         console.print(
             "[red]Error:[/red] Readwise not configured. "
@@ -130,17 +101,14 @@ def sync(
         )
         raise typer.Exit(1)
 
-    source_label = "local cache" if effective_source == DataSource.LOCAL else "cloud"
     tag_info = f" (filtering by tag: '{tag}')" if tag else ""
     llm_info = " with LLM cleanup" if llm_cleanup else ""
-    console.print(f"[bold]Starting sync from {source_label}{tag_info}{llm_info}...[/bold]")
+    console.print(f"[bold]Starting sync{tag_info}{llm_info}...[/bold]")
 
     try:
-        # Create settings copy with effective source
+        # Create settings copy
         sync_settings = Settings(
-            remarkable_source=effective_source,
             remarkable_local_cache_path=settings.remarkable_local_cache_path,
-            remarkable_device_token=settings.remarkable_device_token,
             readwise_access_token=settings.readwise_access_token,
             anthropic_api_key=settings.anthropic_api_key,
             sync_interval_minutes=settings.sync_interval_minutes,
@@ -176,7 +144,7 @@ def sync(
                 stats += f"\n  Total highlights tracked: {total_count}"
             console.print(stats)
         else:
-            console.print(f"\n[yellow]Sync completed with errors:[/yellow]")
+            console.print("\n[yellow]Sync completed with errors:[/yellow]")
             for error in result.errors:
                 console.print(f"  [red]- {error}[/red]")
 
@@ -219,11 +187,11 @@ def status() -> None:
             table.add_column("Synced At")
             table.add_column("Highlights", justify="right")
 
-            for sync in recent:
+            for sync_item in recent:
                 table.add_row(
-                    sync["name"][:40],
-                    sync["synced_at"][:19],
-                    str(sync["highlights"]),
+                    sync_item["name"][:40],
+                    sync_item["synced_at"][:19],
+                    str(sync_item["highlights"]),
                 )
 
             console.print(table)
@@ -236,57 +204,11 @@ def status() -> None:
 
 
 @app.command()
-def auth(
-    service: str = typer.Argument(
-        ...,
-        help="Service to authenticate: 'remarkable' or 'readwise'",
-    ),
-) -> None:
-    """Configure authentication for reMarkable or Readwise.
+def auth() -> None:
+    """Verify Readwise authentication.
 
-    For reMarkable: Opens the registration flow to get a device token.
-    For Readwise: Validates your access token.
+    Validates your Readwise access token.
     """
-    if service.lower() == "remarkable":
-        _auth_remarkable()
-    elif service.lower() == "readwise":
-        _auth_readwise()
-    else:
-        console.print(
-            f"[red]Unknown service:[/red] {service}\n"
-            "Use 'remarkable' or 'readwise'."
-        )
-        raise typer.Exit(1)
-
-
-def _auth_remarkable() -> None:
-    """Handle reMarkable authentication."""
-    console.print("\n[bold]reMarkable Cloud Authentication[/bold]\n")
-    console.print("1. Go to: [link]https://my.remarkable.com/device/desktop/connect[/link]")
-    console.print("2. Enter the one-time code displayed on the website\n")
-
-    code = typer.prompt("Enter the one-time code")
-
-    try:
-        with console.status("[bold green]Registering device..."):
-            client = RemarkableClient()
-            # Note: This is sync for simplicity in CLI
-            import asyncio
-
-            token = asyncio.run(client.register_device(code))
-            client.close()
-
-        console.print("\n[green]Successfully registered![/green]")
-        console.print(f"\nAdd this to your .env file:")
-        console.print(f"[cyan]REMARKABLE_DEVICE_TOKEN={token}[/cyan]")
-
-    except Exception as e:
-        console.print(f"\n[red]Registration failed:[/red] {str(e)}")
-        raise typer.Exit(1)
-
-
-def _auth_readwise() -> None:
-    """Handle Readwise authentication."""
     console.print("\n[bold]Readwise Authentication[/bold]\n")
 
     if not settings.readwise_access_token:
@@ -318,12 +240,6 @@ def _auth_readwise() -> None:
 
 @app.command()
 def list_documents(
-    source: Optional[str] = typer.Option(
-        None,
-        "--source",
-        "-s",
-        help="Data source: 'local' (desktop app cache) or 'cloud' (reMarkable API).",
-    ),
     all_types: bool = typer.Option(
         False,
         "--all",
@@ -338,38 +254,11 @@ def list_documents(
 ) -> None:
     """List all documents from reMarkable.
 
-    By default, uses the local desktop app cache. Use --source=cloud for API.
+    Reads from the reMarkable desktop app local cache.
     """
-    # Determine effective source
-    effective_source = settings.remarkable_source
-    if source:
-        try:
-            effective_source = DataSource(source.lower())
-        except ValueError:
-            console.print(
-                f"[red]Error:[/red] Invalid source '{source}'. "
-                "Use 'local' or 'cloud'."
-            )
-            raise typer.Exit(1)
-
-    # Validate configuration
-    if effective_source == DataSource.CLOUD and not settings.remarkable_device_token:
-        console.print(
-            "[red]Error:[/red] reMarkable not configured for cloud access. "
-            "Run 'remarkawise auth remarkable' first, "
-            "or use --source=local for local cache."
-        )
-        raise typer.Exit(1)
-
-    source_label = "local cache" if effective_source == DataSource.LOCAL else "cloud"
-
     try:
-        with console.status(f"[bold green]Fetching documents from {source_label}..."):
-            if effective_source == DataSource.LOCAL:
-                client = LocalCacheClient(settings.remarkable_local_cache_path)
-            else:
-                client = RemarkableClient(settings.remarkable_device_token)
-
+        with console.status("[bold green]Fetching documents from local cache..."):
+            client = LocalCacheClient(settings.remarkable_local_cache_path)
             documents = client.list_documents()
             client.close()
 
@@ -385,7 +274,7 @@ def list_documents(
             filtered_docs = [d for d in documents if d.document_type.value in syncable_types]
 
         doc_type_label = "documents" if all_types else "syncable documents (PDF/EPUB)"
-        console.print(f"\n[bold]Found {len(filtered_docs)} {doc_type_label} ({source_label}):[/bold]\n")
+        console.print(f"\n[bold]Found {len(filtered_docs)} {doc_type_label}:[/bold]\n")
 
         table = Table()
         table.add_column("ID", style="dim", no_wrap=full_id)
@@ -411,8 +300,11 @@ def list_documents(
         console.print(table)
 
         if not full_id:
-            console.print(f"\n[dim]Tip: Use --full-id to show complete document IDs for use with --document.[/dim]")
-            console.print(f"[dim]Tip: Use --tag=<name> with sync to filter by tag.[/dim]")
+            console.print(
+                "\n[dim]Tip: Use --full-id to show complete document IDs "
+                "for use with --document.[/dim]"
+            )
+            console.print("[dim]Tip: Use --tag=<name> with sync to filter by tag.[/dim]")
 
     except LocalCacheError as e:
         console.print(f"[red]Error:[/red] {str(e)}")
@@ -506,7 +398,7 @@ def reset(
                 raise typer.Exit(1)
 
             # Show what will be reset
-            console.print(f"\n[bold]Document to reset:[/bold]")
+            console.print("\n[bold]Document to reset:[/bold]")
             console.print(f"  Name: {existing.document_name}")
             console.print(f"  ID: {document}")
             console.print(f"  Highlights tracked: {existing.highlight_count}")
@@ -542,7 +434,7 @@ def reset(
                 state_manager.close()
                 raise typer.Exit(0)
 
-            console.print(f"\n[bold yellow]Warning: This will reset ALL sync state![/bold yellow]")
+            console.print("\n[bold yellow]Warning: This will reset ALL sync state![/bold yellow]")
             console.print(f"\n  Documents tracked: {doc_count}")
             console.print(f"  Highlights tracked: {highlight_count}")
             console.print(

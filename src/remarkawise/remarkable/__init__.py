@@ -1,6 +1,6 @@
-"""reMarkable Cloud API integration."""
+"""reMarkable local cache integration."""
 
-from remarkawise.remarkable.client import RemarkableClient
+from remarkawise.remarkable.local_cache import LocalCacheClient
 from remarkawise.remarkable.parser import HighlightParser
 
-__all__ = ["RemarkableClient", "HighlightParser"]
+__all__ = ["LocalCacheClient", "HighlightParser"]
