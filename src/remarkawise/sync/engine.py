@@ -280,19 +280,23 @@ class SyncEngine:
             self._log("  No new highlights to sync")
             return 0, deleted_count
 
-        # Get document metadata
+        # Get document metadata from PDF (fallback for title)
         with PDFHighlightExtractor(pdf_path) as extractor:
-            metadata = extractor.get_document_metadata()
+            pdf_metadata = extractor.get_document_metadata()
 
         # Determine Readwise category from document tags
         category = self._get_category_from_tags(doc.tags)
         self._log(f"  Category: {category}")
 
+        # Use author from reMarkable .content file, fall back to PDF metadata
+        author = doc.author or pdf_metadata.get("author")
+        self._log(f"  Author: {author or 'Unknown'}")
+
         # Convert to Readwise format
         rw_highlights = convert_to_readwise_highlights(
             highlights_to_sync,
-            document_title=metadata.get("title") or doc.name,
-            author=metadata.get("author"),
+            document_title=pdf_metadata.get("title") or doc.name,
+            author=author,
             category=category,
         )
 

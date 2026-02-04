@@ -148,8 +148,9 @@ class LocalCacheClient:
         except (ValueError, OSError):
             modified_time = datetime.utcnow()
 
-        # Read tags from .content file
+        # Read tags and author from .content file
         tags = self._read_document_tags(doc_id)
+        author = self._read_document_author(doc_id)
 
         return RemarkableDocument(
             id=doc_id,
@@ -159,7 +160,27 @@ class LocalCacheClient:
             modified_time=modified_time,
             version=1,  # Local cache doesn't track versions the same way
             tags=tags,
+            author=author,
         )
+
+    def _read_content_file(self, doc_id: str) -> dict:
+        """Read and parse a document's .content file.
+
+        Args:
+            doc_id: Document ID
+
+        Returns:
+            Parsed content dictionary, or empty dict if not found/invalid
+        """
+        content_file = self.cache_path / f"{doc_id}.content"
+        if not content_file.exists():
+            return {}
+
+        try:
+            with open(content_file) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, KeyError):
+            return {}
 
     def _read_document_tags(self, doc_id: str) -> list[str]:
         """Read tags from a document's .content file.
@@ -170,26 +191,42 @@ class LocalCacheClient:
         Returns:
             List of tag names
         """
-        content_file = self.cache_path / f"{doc_id}.content"
-        if not content_file.exists():
+        content = self._read_content_file(doc_id)
+        if not content:
             return []
 
-        try:
-            with open(content_file) as f:
-                content = json.load(f)
+        # Tags are stored as a list in the .content file
+        # Each tag may be a string or an object with a "name" field
+        raw_tags = content.get("tags", [])
+        tags = []
+        for tag in raw_tags:
+            if isinstance(tag, str):
+                tags.append(tag)
+            elif isinstance(tag, dict) and "name" in tag:
+                tags.append(tag["name"])
+        return tags
 
-            # Tags are stored as a list in the .content file
-            # Each tag may be a string or an object with a "name" field
-            raw_tags = content.get("tags", [])
-            tags = []
-            for tag in raw_tags:
-                if isinstance(tag, str):
-                    tags.append(tag)
-                elif isinstance(tag, dict) and "name" in tag:
-                    tags.append(tag["name"])
-            return tags
-        except (json.JSONDecodeError, KeyError):
-            return []
+    def _read_document_author(self, doc_id: str) -> Optional[str]:
+        """Read author from a document's .content file.
+
+        Args:
+            doc_id: Document ID
+
+        Returns:
+            Author name(s) as a string, or None if not found
+        """
+        content = self._read_content_file(doc_id)
+        if not content:
+            return None
+
+        # Author is stored in documentMetadata.authors as a list
+        doc_metadata = content.get("documentMetadata", {})
+        authors = doc_metadata.get("authors", [])
+
+        if authors:
+            # Join multiple authors with comma
+            return ", ".join(authors)
+        return None
 
     def download_document(self, doc_id: str, output_dir: Path) -> Path:
         """Copy a document from the cache to the output directory.

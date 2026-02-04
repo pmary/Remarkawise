@@ -16,7 +16,7 @@ class DocumentType(str, Enum):
 
 
 class RemarkableDocument(BaseModel):
-    """Represents a document from reMarkable Cloud."""
+    """Represents a document from reMarkable."""
 
     id: str = Field(description="Unique document identifier")
     name: str = Field(description="Document name/title")
@@ -25,6 +25,7 @@ class RemarkableDocument(BaseModel):
     modified_time: datetime = Field(description="Last modification time")
     version: int = Field(default=1, description="Document version")
     tags: list[str] = Field(default_factory=list, description="Document tags/labels")
+    author: Optional[str] = Field(default=None, description="Document author(s)")
 
     # Populated after download
     file_path: Optional[str] = Field(default=None, description="Local path to downloaded file")
