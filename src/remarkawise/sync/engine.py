@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from remarkawise.config import Settings
+from remarkawise.logging import get_logger
 from remarkawise.models import (
     DocumentType,
     Highlight,
@@ -17,11 +18,12 @@ from remarkawise.models import (
 )
 from remarkawise.pdf.extractor import PDFHighlightExtractor, merge_highlight_regions
 from remarkawise.readwise.client import (
+    ReadwiseAPIError,
     ReadwiseClient,
     ReadwiseRateLimitError,
     convert_to_readwise_highlights,
 )
-from remarkawise.remarkable.local_cache import LocalCacheClient
+from remarkawise.remarkable.local_cache import LocalCacheClient, LocalCacheError
 from remarkawise.remarkable.parser import HighlightParser
 from remarkawise.sync.state import StateManager
 
@@ -61,15 +63,15 @@ class SyncEngine:
         self._state_manager = state_manager or StateManager(settings.sync_state_path)
         self._highlight_parser = HighlightParser(verbose=verbose)
         self._llm_cleaner: "LLMTextCleaner | None" = None
+        self._llm_cleanup_error: type[Exception] | None = None
 
         # Initialize LLM cleaner if enabled
         if llm_cleanup:
             self._init_llm_cleaner()
 
     def _log(self, message: str) -> None:
-        """Print a message if verbose mode is enabled."""
-        if self.verbose:
-            print(f"  [DEBUG] {message}")
+        """Log a message using the logging module."""
+        get_logger("sync").info(message)
 
     def _init_llm_cleaner(self) -> None:
         """Initialize the LLM text cleaner."""
@@ -80,9 +82,10 @@ class SyncEngine:
             )
 
         try:
-            from remarkawise.llm.cleanup import LLMTextCleaner
+            from remarkawise.llm.cleanup import LLMCleanupError, LLMTextCleaner
 
             self._llm_cleaner = LLMTextCleaner(self.settings.anthropic_api_key)
+            self._llm_cleanup_error = LLMCleanupError
             self._log("LLM text cleaner initialized")
         except ImportError as e:
             raise ValueError(
@@ -133,8 +136,13 @@ class SyncEngine:
             return cleaned_highlights
 
         except Exception as e:
-            self._log(f"LLM cleanup failed, using original text: {e}")
-            return highlights
+            # Check if it's the expected LLM cleanup error
+            if self._llm_cleanup_error and isinstance(e, self._llm_cleanup_error):
+                self._log(f"LLM cleanup failed, using original text: {e}")
+                return highlights
+            # Unexpected error - log but don't hide it
+            self._log(f"Unexpected error during LLM cleanup: {e}")
+            raise
 
     @property
     def remarkable_client(self) -> LocalCacheClient:
@@ -211,17 +219,28 @@ class SyncEngine:
                     total_highlights += synced
                     total_deleted += deleted
                     result.documents_processed += 1
-                except Exception as e:
-                    error_msg = f"Error syncing '{doc.name}': {str(e)}"
+                except (ReadwiseAPIError, ReadwiseRateLimitError) as e:
+                    error_msg = f"API error syncing '{doc.name}': {e}"
                     errors.append(error_msg)
+                    self._log(error_msg)
+                except (OSError, ValueError) as e:
+                    error_msg = f"Error syncing '{doc.name}': {e}"
+                    errors.append(error_msg)
+                    self._log(error_msg)
 
             result.highlights_synced = total_highlights
             result.highlights_deleted = total_deleted
             result.success = len(errors) == 0
             result.errors = errors
 
-        except Exception as e:
-            errors.append(f"Sync failed: {str(e)}")
+        except LocalCacheError as e:
+            errors.append(f"Cache error: {e}")
+            result.errors = errors
+        except (ReadwiseAPIError, ReadwiseRateLimitError) as e:
+            errors.append(f"Readwise API error: {e}")
+            result.errors = errors
+        except ValueError as e:
+            errors.append(f"Configuration error: {e}")
             result.errors = errors
 
         result.completed_at = datetime.utcnow()
@@ -361,7 +380,10 @@ class SyncEngine:
                         self._log(
                             f"    Highlight {highlight_id} not found in Readwise (already deleted?)"
                         )
-                except Exception as e:
+                except ReadwiseRateLimitError as e:
+                    self._log(f"    Rate limited deleting {highlight_id}, will retry later: {e}")
+                    continue
+                except ReadwiseAPIError as e:
                     self._log(f"    Failed to delete highlight {highlight_id}: {e}")
                     continue
             else:
@@ -458,9 +480,11 @@ class SyncEngine:
                             self._log(f"      - \"{hl.text[:50]}...\"" if len(hl.text) > 50 else f"      - \"{hl.text}\"")
                         highlights.extend(page_highlights)
 
-            except Exception as e:
-                self._log(f"    Error processing .rm file: {e}")
-                # Skip problematic .rm files
+            except (OSError, json.JSONDecodeError) as e:
+                self._log(f"    Error reading .rm file {rm_file.name}: {e}")
+                continue
+            except ValueError as e:
+                self._log(f"    Invalid data in .rm file {rm_file.name}: {e}")
                 continue
 
         # Also extract native PDF highlights

@@ -9,7 +9,10 @@ from typing import Optional
 
 import httpx
 
+from remarkawise.logging import get_logger
 from remarkawise.models import Highlight, ReadwiseHighlight
+
+logger = get_logger("readwise")
 
 
 class ReadwiseAPIError(Exception):
@@ -145,14 +148,11 @@ class ReadwiseClient:
             data = response.json()
 
             # Debug: show response structure
-            import os
-            if os.environ.get("REMARKAWISE_DEBUG"):
-                import sys
-                print(f"  [READWISE] Response type: {type(data).__name__}", file=sys.stderr)
-                if isinstance(data, dict):
-                    print(f"  [READWISE] Response keys: {list(data.keys())}", file=sys.stderr)
-                elif isinstance(data, list) and data:
-                    print(f"  [READWISE] First item keys: {list(data[0].keys()) if data[0] else 'empty'}", file=sys.stderr)
+            logger.debug(f"Response type: {type(data).__name__}")
+            if isinstance(data, dict):
+                logger.debug(f"Response keys: {list(data.keys())}")
+            elif isinstance(data, list) and data:
+                logger.debug(f"First item keys: {list(data[0].keys()) if data[0] else 'empty'}")
 
             # Response format varies:
             # - List of books with modified_highlights: [{"id": book_id, "modified_highlights": [...]}]
@@ -185,24 +185,20 @@ class ReadwiseClient:
                     or []
                 )
 
-            if os.environ.get("REMARKAWISE_DEBUG") and created_highlights:
-                import sys
-                print(f"  [READWISE] Found {len(created_highlights)} items in modified_highlights", file=sys.stderr)
-                if created_highlights:
-                    first = created_highlights[0]
-                    if isinstance(first, dict):
-                        print(f"  [READWISE] First item keys: {list(first.keys())}", file=sys.stderr)
-                    else:
-                        print(f"  [READWISE] First item type: {type(first).__name__} (value: {first})", file=sys.stderr)
+            if created_highlights:
+                logger.debug(f"Found {len(created_highlights)} items in modified_highlights")
+                first = created_highlights[0]
+                if isinstance(first, dict):
+                    logger.debug(f"First item keys: {list(first.keys())}")
+                else:
+                    logger.debug(f"First item type: {type(first).__name__} (value: {first})")
 
             # Check if we got full objects or just IDs
             got_ids_only = created_highlights and isinstance(created_highlights[0], int)
 
             if got_ids_only and book_ids:
                 # API returned just highlight IDs - fetch full highlight data from book
-                if os.environ.get("REMARKAWISE_DEBUG"):
-                    import sys
-                    print(f"  [READWISE] Got {len(created_highlights)} highlight IDs, fetching details from book(s)...", file=sys.stderr)
+                logger.debug(f"Got {len(created_highlights)} highlight IDs, fetching details from book(s)...")
 
                 # Fetch highlights for each book and match by text
                 for book_id in book_ids:
@@ -215,10 +211,8 @@ class ReadwiseClient:
                                 text_hash = text_hashes.get(text)
                                 if text_hash:
                                     readwise_ids[text_hash] = rw_id
-                    except Exception as e:
-                        if os.environ.get("REMARKAWISE_DEBUG"):
-                            import sys
-                            print(f"  [READWISE] Failed to fetch highlights for book {book_id}: {e}", file=sys.stderr)
+                    except (ReadwiseAPIError, ReadwiseRateLimitError, httpx.HTTPError) as e:
+                        logger.debug(f"Failed to fetch highlights for book {book_id}: {e}")
             else:
                 # Got full highlight objects - extract directly
                 for rw_hl in created_highlights:
@@ -231,9 +225,8 @@ class ReadwiseClient:
                                 readwise_ids[text_hash] = rw_id
         except (ValueError, KeyError) as e:
             # If we can't parse the response, continue without IDs
-            import sys
-            print(f"  [DEBUG] Failed to parse Readwise response: {e}", file=sys.stderr)
-            print(f"  [DEBUG] Response: {response.text[:500]}", file=sys.stderr)
+            logger.warning(f"Failed to parse Readwise response: {e}")
+            logger.debug(f"Response: {response.text[:500]}")
 
         return {"created": len(highlights), "readwise_ids": readwise_ids}
 

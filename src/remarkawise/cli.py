@@ -8,6 +8,7 @@ from rich.table import Table
 
 from remarkawise import __version__
 from remarkawise.config import Settings, settings
+from remarkawise.logging import setup_logging
 from remarkawise.readwise.client import ReadwiseClient
 from remarkawise.remarkable.local_cache import LocalCacheClient, LocalCacheError
 from remarkawise.sync.engine import SyncEngine
@@ -100,6 +101,10 @@ def sync(
             "Add it to your .env file."
         )
         raise typer.Exit(1)
+
+    # Setup logging for verbose/debug output
+    if verbose:
+        setup_logging(verbose=True)
 
     tag_info = f" (filtering by tag: '{tag}')" if tag else ""
     llm_info = " with LLM cleanup" if llm_cleanup else ""

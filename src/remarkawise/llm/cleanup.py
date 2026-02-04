@@ -41,6 +41,8 @@ class LLMTextCleaner:
         """
         try:
             import anthropic
+
+            self._anthropic = anthropic  # Store for exception handling
         except ImportError as e:
             raise LLMCleanupError(
                 "anthropic package not installed. "
@@ -75,8 +77,10 @@ class LLMTextCleaner:
                 ],
             )
             return response.content[0].text.strip()
-        except Exception as e:
-            raise LLMCleanupError(f"Failed to cleanup text: {e}") from e
+        except self._anthropic.APIError as e:
+            raise LLMCleanupError(f"API error during cleanup: {e}") from e
+        except (KeyError, IndexError, AttributeError) as e:
+            raise LLMCleanupError(f"Invalid response from API: {e}") from e
 
     def cleanup_batch(self, texts: list[str]) -> list[str]:
         """Clean up multiple texts in a single API call.
@@ -131,8 +135,10 @@ class LLMTextCleaner:
 
             return result
 
-        except Exception as e:
-            raise LLMCleanupError(f"Failed to cleanup batch: {e}") from e
+        except self._anthropic.APIError as e:
+            raise LLMCleanupError(f"API error during batch cleanup: {e}") from e
+        except (KeyError, IndexError, AttributeError, ValueError) as e:
+            raise LLMCleanupError(f"Invalid response from API: {e}") from e
 
     def _parse_numbered_response(self, response: str, expected_count: int) -> list[str]:
         """Parse numbered response from LLM.

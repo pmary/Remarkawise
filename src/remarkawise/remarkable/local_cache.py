@@ -97,8 +97,8 @@ class LocalCacheClient:
                 doc = self._parse_metadata_file(metadata_file)
                 if doc:
                     documents.append(doc)
-            except Exception:
-                # Skip problematic files
+            except (OSError, json.JSONDecodeError, KeyError, ValueError):
+                # Skip problematic files (corrupted metadata, missing fields, etc.)
                 continue
 
         return documents

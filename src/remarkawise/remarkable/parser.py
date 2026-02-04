@@ -16,7 +16,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO, Optional
 
+from remarkawise.logging import get_logger
 from remarkawise.pdf.extractor import decode_ligatures
+
+logger = get_logger("parser")
 
 # Import rmscene for v6 format support
 try:
@@ -135,8 +138,7 @@ class RMFileParser:
         strokes: list[Stroke] = []
 
         def _log(msg: str) -> None:
-            if verbose:
-                print(f"        [V6] {msg}")
+            logger.debug(f"[V6] {msg}")
 
         try:
             # Suppress rmscene warnings about newer format data (printed to stderr)
@@ -197,11 +199,11 @@ class RMFileParser:
                     )
                     strokes.append(stroke)
 
-        except Exception as e:
-            _log(f"Exception during v6 parsing: {e}")
-            import traceback
-            _log(traceback.format_exc())
-            # If rmscene fails, return empty
+        except OSError as e:
+            _log(f"File error during v6 parsing: {e}")
+            return []
+        except (struct.error, ValueError, AttributeError) as e:
+            _log(f"Parse error during v6 parsing: {e}")
             return []
 
         _log(f"Total strokes found: {len(strokes)}")
@@ -222,8 +224,7 @@ class RMFileParser:
         highlights: list[GlyphHighlight] = []
 
         def _log(msg: str) -> None:
-            if verbose:
-                print(f"        [V6-GLYPH] {msg}")
+            logger.debug(f"[V6-GLYPH] {msg}")
 
         if not RMSCENE_AVAILABLE:
             _log("rmscene not available")
@@ -268,10 +269,10 @@ class RMFileParser:
                                     rectangles=rects,
                                 ))
 
-        except Exception as e:
-            _log(f"Exception during glyph parsing: {e}")
-            import traceback
-            _log(traceback.format_exc())
+        except OSError as e:
+            _log(f"File error during glyph parsing: {e}")
+        except (struct.error, ValueError, AttributeError) as e:
+            _log(f"Parse error during glyph parsing: {e}")
 
         _log(f"Total glyph highlights found (before merge): {len(highlights)}")
 
@@ -298,8 +299,7 @@ class RMFileParser:
             Merged list of glyph highlights
         """
         def _log(msg: str) -> None:
-            if verbose:
-                print(f"        [V6-GLYPH] {msg}")
+            logger.debug(f"[V6-GLYPH] {msg}")
 
         if not highlights:
             return highlights
@@ -478,9 +478,8 @@ class HighlightParser:
         self.verbose = verbose
 
     def _log(self, message: str) -> None:
-        """Print a message if verbose mode is enabled."""
-        if self.verbose:
-            print(f"      [PARSER] {message}")
+        """Log a message using the logging module."""
+        logger.info(message)
 
     def extract_highlight_regions(
         self, rm_file_path: Path
