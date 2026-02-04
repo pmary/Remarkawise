@@ -71,6 +71,11 @@ def sync(
         "-s",
         help="Data source: 'local' (desktop app cache) or 'cloud' (reMarkable API).",
     ),
+    llm_cleanup: bool = typer.Option(
+        False,
+        "--llm-cleanup",
+        help="Use Claude AI to fix corrupted text from PDF extraction. Requires ANTHROPIC_API_KEY.",
+    ),
     verbose: bool = typer.Option(
         False,
         "--verbose",
@@ -85,6 +90,9 @@ def sync(
 
     Use --tag to filter by document tags (e.g., --tag=readwise to only sync
     documents tagged with 'readwise' on your reMarkable).
+
+    Use --llm-cleanup to fix corrupted text using Claude AI (requires ANTHROPIC_API_KEY
+    in your .env file). This fixes issues like missing spaces, broken ligatures, etc.
     """
     # Override source if specified
     effective_source = settings.remarkable_source
@@ -114,9 +122,18 @@ def sync(
         )
         raise typer.Exit(1)
 
+    # Validate LLM cleanup configuration
+    if llm_cleanup and not settings.anthropic_api_key:
+        console.print(
+            "[red]Error:[/red] --llm-cleanup requires ANTHROPIC_API_KEY. "
+            "Add it to your .env file."
+        )
+        raise typer.Exit(1)
+
     source_label = "local cache" if effective_source == DataSource.LOCAL else "cloud"
     tag_info = f" (filtering by tag: '{tag}')" if tag else ""
-    console.print(f"[bold]Starting sync from {source_label}{tag_info}...[/bold]")
+    llm_info = " with LLM cleanup" if llm_cleanup else ""
+    console.print(f"[bold]Starting sync from {source_label}{tag_info}{llm_info}...[/bold]")
 
     try:
         # Create settings copy with effective source
@@ -125,11 +142,12 @@ def sync(
             remarkable_local_cache_path=settings.remarkable_local_cache_path,
             remarkable_device_token=settings.remarkable_device_token,
             readwise_access_token=settings.readwise_access_token,
+            anthropic_api_key=settings.anthropic_api_key,
             sync_interval_minutes=settings.sync_interval_minutes,
             sync_folders=settings.sync_folders,
             data_dir=settings.data_dir,
         )
-        engine = SyncEngine(sync_settings, verbose=verbose)
+        engine = SyncEngine(sync_settings, verbose=verbose, llm_cleanup=llm_cleanup)
         document_ids = [document] if document else None
         filter_tag = tag
 

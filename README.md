@@ -14,6 +14,7 @@ Sync highlights from your reMarkable Paper Pro to Readwise Reader.
 - **Incremental sync**: Only syncs new highlights (existing highlights are not re-uploaded)
 - **Deletion sync**: Removes highlights from Readwise when deleted on reMarkable
 - **State tracking**: Remembers what has been synced to avoid duplicates
+- **LLM text cleanup** (optional): Uses Claude AI to fix corrupted text from PDF extraction
 
 ## Installation
 
@@ -100,6 +101,9 @@ remarkawise sync --tag readwise
 
 # Use cloud API instead of local cache
 remarkawise sync --source=cloud
+
+# Use LLM to fix corrupted text (requires ANTHROPIC_API_KEY)
+remarkawise sync --llm-cleanup
 ```
 
 #### Filtering by tag
@@ -122,6 +126,26 @@ Control where synced highlights appear in Readwise (Books or Articles tab):
 - No category tag → defaults to **Books** tab
 
 Tag matching is case-insensitive. You can combine category tags with filter tags (e.g., tag a document with both `readwise` and `article`).
+
+#### LLM text cleanup (optional)
+
+PDF text extraction can sometimes produce corrupted text (missing spaces, broken ligatures, etc.). The `--llm-cleanup` flag uses Claude AI to fix these issues.
+
+1. Get an API key from https://console.anthropic.com
+2. Add to your `.env` file:
+   ```
+   ANTHROPIC_API_KEY=sk-ant-...
+   ```
+3. Install the optional dependency:
+   ```bash
+   pip install -e ".[llm]"
+   ```
+4. Use the flag when syncing:
+   ```bash
+   remarkawise sync --llm-cleanup
+   ```
+
+This uses Claude Haiku (~$0.25/million tokens), so typical syncs cost fractions of a cent.
 
 ### View status
 
@@ -290,6 +314,8 @@ src/remarkawise/
 │   └── client.py       # Readwise API client (httpx)
 ├── pdf/
 │   └── extractor.py    # PDF text extraction (PyMuPDF)
+├── llm/
+│   └── cleanup.py      # LLM-based text cleanup (Anthropic Claude)
 └── sync/
     ├── engine.py       # Sync orchestration
     └── state.py        # State persistence (SQLite)
@@ -304,7 +330,15 @@ src/remarkawise/
 ## Development
 
 ```bash
-# Install dev dependencies
+# Create a virtual environment
+python -m venv venv
+
+# Activate it
+source venv/bin/activate
+
+# Install it
+pip install -e .
+# OR with dev dependencies
 pip install -e ".[dev]"
 
 # Run linting
@@ -326,3 +360,4 @@ MIT License - see LICENSE file for details.
 - [reMarkable](https://remarkable.com/) for the Paper Pro device
 - [Readwise](https://readwise.io/) for the highlight management platform
 - [PyMuPDF](https://pymupdf.readthedocs.io/) for PDF processing
+- [Anthropic](https://anthropic.com/) for Claude AI (optional LLM text cleanup)

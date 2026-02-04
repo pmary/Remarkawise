@@ -5,7 +5,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from remarkawise.config import DataSource, Settings
 from remarkawise.models import (
@@ -26,6 +26,9 @@ from remarkawise.remarkable.local_cache import LocalCacheClient
 from remarkawise.remarkable.parser import HighlightParser
 from remarkawise.sync.state import StateManager
 
+if TYPE_CHECKING:
+    from remarkawise.llm.cleanup import LLMTextCleaner
+
 # Type alias for both client types
 RemarkableClientType = RemarkableClient | LocalCacheClient
 
@@ -40,6 +43,7 @@ class SyncEngine:
         readwise_client: Optional[ReadwiseClient] = None,
         state_manager: Optional[StateManager] = None,
         verbose: bool = False,
+        llm_cleanup: bool = False,
     ) -> None:
         """Initialize the sync engine.
 
@@ -49,20 +53,92 @@ class SyncEngine:
             readwise_client: Optional pre-configured Readwise client
             state_manager: Optional pre-configured state manager
             verbose: Enable verbose logging
+            llm_cleanup: Use LLM to clean up corrupted text from PDF extraction
         """
         self.settings = settings
         self.verbose = verbose
+        self.llm_cleanup = llm_cleanup
         settings.ensure_directories()
 
         self._rm_client = remarkable_client
         self._rw_client = readwise_client
         self._state_manager = state_manager or StateManager(settings.sync_state_path)
         self._highlight_parser = HighlightParser(verbose=verbose)
+        self._llm_cleaner: "LLMTextCleaner | None" = None
+
+        # Initialize LLM cleaner if enabled
+        if llm_cleanup:
+            self._init_llm_cleaner()
 
     def _log(self, message: str) -> None:
         """Print a message if verbose mode is enabled."""
         if self.verbose:
             print(f"  [DEBUG] {message}")
+
+    def _init_llm_cleaner(self) -> None:
+        """Initialize the LLM text cleaner."""
+        if not self.settings.anthropic_api_key:
+            raise ValueError(
+                "LLM cleanup enabled but ANTHROPIC_API_KEY not set. "
+                "Add your API key to .env or disable --llm-cleanup."
+            )
+
+        try:
+            from remarkawise.llm.cleanup import LLMTextCleaner
+
+            self._llm_cleaner = LLMTextCleaner(self.settings.anthropic_api_key)
+            self._log("LLM text cleaner initialized")
+        except ImportError as e:
+            raise ValueError(
+                "LLM cleanup requires the anthropic package. "
+                "Install with: pip install -e '.[llm]'"
+            ) from e
+
+    def _apply_llm_cleanup(self, highlights: list[Highlight]) -> list[Highlight]:
+        """Apply LLM cleanup to highlight texts.
+
+        Args:
+            highlights: List of highlights to clean
+
+        Returns:
+            List of highlights with cleaned text
+        """
+        if not self._llm_cleaner or not highlights:
+            return highlights
+
+        self._log(f"Applying LLM cleanup to {len(highlights)} highlights...")
+
+        # Extract texts for batch processing
+        texts = [h.text for h in highlights]
+
+        try:
+            cleaned_texts = self._llm_cleaner.cleanup_batch(texts)
+
+            # Update highlights with cleaned text
+            cleaned_highlights = []
+            for highlight, cleaned_text in zip(highlights, cleaned_texts, strict=False):
+                if cleaned_text and cleaned_text != highlight.text:
+                    orig = highlight.text[:40]
+                    clean = cleaned_text[:40]
+                    self._log(f"  Cleaned: \"{orig}...\" → \"{clean}...\"")
+                    cleaned_highlights.append(
+                        Highlight(
+                            id=highlight.id,
+                            document_id=highlight.document_id,
+                            text=cleaned_text,
+                            page_number=highlight.page_number,
+                            position=highlight.position,
+                            note=highlight.note,
+                        )
+                    )
+                else:
+                    cleaned_highlights.append(highlight)
+
+            return cleaned_highlights
+
+        except Exception as e:
+            self._log(f"LLM cleanup failed, using original text: {e}")
+            return highlights
 
     @property
     def remarkable_client(self) -> RemarkableClientType:
@@ -194,6 +270,10 @@ class SyncEngine:
         all_highlights = self._extract_highlights(doc, pdf_path, rm_files)
 
         self._log(f"  Extracted {len(all_highlights)} highlights")
+
+        # Apply LLM cleanup if enabled
+        if self.llm_cleanup and all_highlights:
+            all_highlights = self._apply_llm_cleanup(all_highlights)
 
         # Detect deleted highlights (synced before but no longer on device)
         deleted_count = self._sync_deletions(doc.id, all_highlights)
@@ -532,3 +612,5 @@ class SyncEngine:
             self._rw_client.close()
         if self._state_manager:
             self._state_manager.close()
+        if self._llm_cleaner:
+            self._llm_cleaner.close()

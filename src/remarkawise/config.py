@@ -48,6 +48,12 @@ class Settings(BaseSettings):
         description="Access token for Readwise API",
     )
 
+    # LLM cleanup settings (optional)
+    anthropic_api_key: Optional[str] = Field(
+        default=None,
+        description="Anthropic API key for LLM-based text cleanup",
+    )
+
     # Sync settings
     sync_interval_minutes: int = Field(
         default=60,
