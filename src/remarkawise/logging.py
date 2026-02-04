@@ -1,4 +1,46 @@
-"""Logging utilities for Remarkawise."""
+"""Logging utilities for Remarkawise.
+
+This module provides centralized logging infrastructure for the application.
+
+Usage Patterns:
+    # Module-level logger initialization
+    from remarkawise.logging import get_logger
+    logger = get_logger("module_name")
+
+    # Logging at different levels
+    logger.debug("Detailed diagnostic info")
+    logger.info("Progress updates")
+    logger.warning("Recoverable issues")
+    logger.error("Failures that need attention")
+
+Error Handling Patterns:
+    The application uses a tiered error handling approach:
+
+    1. Configuration Errors:
+       - Missing required settings (API tokens) -> exit code 1
+       - Invalid paths/values -> exit code 1
+       - Detected early, fail fast with clear messages
+
+    2. API Errors:
+       - Rate limiting -> ReadwiseRateLimitError (includes retry_after)
+       - Authentication -> verify_token() returns False
+       - Request failures -> ReadwiseAPIError with context
+
+    3. Local Cache Errors:
+       - Missing cache directory -> LocalCacheError
+       - Corrupt metadata -> logged and skipped
+       - Missing files -> logged and skipped
+
+    4. Sync Errors:
+       - Individual document failures are logged but don't halt sync
+       - Errors are collected in SyncResult.errors
+       - Sync continues with remaining documents
+
+Log Levels:
+    - WARNING (default): Only show errors and warnings
+    - INFO (--verbose): Show sync progress and status
+    - DEBUG: Full diagnostic output including API responses
+"""
 
 import logging
 import sys

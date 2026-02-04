@@ -1,4 +1,32 @@
-"""Command-line interface for Remarkawise."""
+"""Command-line interface for Remarkawise.
+
+This module provides the CLI for syncing highlights from reMarkable to Readwise.
+
+Commands:
+    sync           - Sync highlights from reMarkable to Readwise
+    status         - Show sync status and statistics
+    auth           - Verify Readwise authentication
+    list-documents - List documents from reMarkable local cache
+    reset          - Reset sync state to re-sync highlights
+
+Error Handling:
+    - Configuration errors (missing tokens) exit with code 1
+    - API errors are caught and displayed with context
+    - All commands support --verbose for debug output
+
+Example Usage:
+    # Sync all documents
+    remarkawise sync
+
+    # Sync only documents tagged 'readwise'
+    remarkawise sync --tag readwise
+
+    # Sync with AI text cleanup
+    remarkawise sync --llm-cleanup --verbose
+
+    # Check authentication
+    remarkawise auth
+"""
 
 from typing import Optional
 
@@ -173,7 +201,15 @@ def sync(
 
 @app.command()
 def status() -> None:
-    """Show sync status and statistics."""
+    """Show sync status and statistics.
+
+    Displays a summary of sync activity including:
+    - Total documents synced
+    - Total highlights tracked
+    - Recent sync history with document names and highlight counts
+
+    The data is read from the local sync state database.
+    """
     try:
         engine = SyncEngine(settings)
         status_data = engine.get_status()
@@ -257,9 +293,17 @@ def list_documents(
         help="Show full document IDs (useful for --document flag).",
     ),
 ) -> None:
-    """List all documents from reMarkable.
+    """List all documents from reMarkable local cache.
 
-    Reads from the reMarkable desktop app local cache.
+    Reads document metadata from the reMarkable desktop app's local cache
+    directory. By default, only shows syncable document types (PDF, EPUB).
+
+    The output includes document ID, name, tags, and modification date.
+    Use --full-id to get complete document IDs for use with other commands.
+
+    Args:
+        all_types: Show all document types including notebooks
+        full_id: Display complete document IDs instead of truncated versions
     """
     try:
         with console.status("[bold green]Fetching documents from local cache..."):
