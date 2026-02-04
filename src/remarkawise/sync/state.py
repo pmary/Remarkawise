@@ -4,7 +4,6 @@ Tracks which documents have been synced and their versions to enable
 incremental synchronization.
 """
 
-import hashlib
 import json
 import sqlite3
 from datetime import datetime
@@ -12,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from remarkawise.models import Highlight, SyncState
+from remarkawise.utils import generate_content_checksum, generate_text_hash
 
 
 class StateManager:
@@ -173,7 +173,7 @@ class StateManager:
         readwise_ids = readwise_ids or {}
 
         for highlight in highlights:
-            text_hash = hashlib.sha256(highlight.text.encode()).hexdigest()[:32]
+            text_hash = generate_text_hash(highlight.text)
             readwise_id = readwise_ids.get(text_hash)
             conn.execute(
                 """
@@ -296,7 +296,7 @@ class StateManager:
             [{"id": h.id, "text": h.text, "page": h.page_number} for h in highlights],
             sort_keys=True,
         )
-        return hashlib.sha256(content.encode()).hexdigest()[:32]
+        return generate_content_checksum(content)
 
     def get_all_synced_documents(self) -> list[SyncState]:
         """Get all documents that have been synced.

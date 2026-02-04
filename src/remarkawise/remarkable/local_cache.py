@@ -14,7 +14,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from remarkawise.logging import get_logger
 from remarkawise.models import DocumentType, RemarkableDocument
+
+logger = get_logger("local_cache")
 
 
 class LocalCacheError(Exception):
@@ -97,8 +100,9 @@ class LocalCacheClient:
                 doc = self._parse_metadata_file(metadata_file)
                 if doc:
                     documents.append(doc)
-            except (OSError, json.JSONDecodeError, KeyError, ValueError):
+            except (OSError, json.JSONDecodeError, KeyError, ValueError) as e:
                 # Skip problematic files (corrupted metadata, missing fields, etc.)
+                logger.debug(f"Skipping {metadata_file.name}: {e}")
                 continue
 
         return documents
@@ -179,7 +183,8 @@ class LocalCacheClient:
         try:
             with open(content_file) as f:
                 return json.load(f)
-        except (json.JSONDecodeError, KeyError):
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.debug(f"Could not read content file for {doc_id}: {e}")
             return {}
 
     def _read_document_tags(self, doc_id: str) -> list[str]:

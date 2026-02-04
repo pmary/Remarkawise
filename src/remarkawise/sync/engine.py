@@ -1,6 +1,5 @@
 """Sync engine orchestrating the reMarkable to Readwise synchronization."""
 
-import hashlib
 import json
 import time
 from datetime import datetime
@@ -9,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 
 from remarkawise.config import Settings
 from remarkawise.logging import get_logger
+from remarkawise.utils import generate_highlight_id
 from remarkawise.models import (
     DocumentType,
     Highlight,
@@ -439,13 +439,8 @@ class SyncEngine:
                 if glyph_highlights:
                     self._log(f"    Found {len(glyph_highlights)} glyph highlights (Paper Pro format)")
                     for gh in glyph_highlights:
-                        # Generate deterministic ID
-                        content = f"{doc.id}:{page_num}:{gh.text[:100]}"
-                        hash_value = hashlib.sha256(content.encode()).hexdigest()[:16]
-                        highlight_id = f"rm_{hash_value}"
-
                         highlight = Highlight(
-                            id=highlight_id,
+                            id=generate_highlight_id(doc.id, page_num + 1, gh.text),
                             document_id=doc.id,
                             text=gh.text,
                             page_number=page_num + 1,  # Convert to 1-indexed
@@ -541,8 +536,8 @@ class SyncEngine:
                     if page_uuid == rm_uuid:
                         return idx
 
-            except (json.JSONDecodeError, KeyError):
-                pass
+            except (json.JSONDecodeError, KeyError) as e:
+                self._log(f"    Could not read .content file for page mapping: {e}")
 
         # Fallback: try parsing filename as number
         try:

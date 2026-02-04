@@ -11,6 +11,7 @@ import httpx
 
 from remarkawise.logging import get_logger
 from remarkawise.models import Highlight, ReadwiseHighlight
+from remarkawise.utils import generate_text_hash
 
 logger = get_logger("readwise")
 
@@ -72,6 +73,125 @@ class ReadwiseClient:
         except httpx.HTTPError:
             return False
 
+    def _check_rate_limit(self, response: httpx.Response) -> None:
+        """Check response for rate limit and raise if exceeded.
+
+        Args:
+            response: HTTP response to check
+
+        Raises:
+            ReadwiseRateLimitError: If rate limit is exceeded
+        """
+        if response.status_code == 429:
+            retry_after = int(response.headers.get("Retry-After", 60))
+            raise ReadwiseRateLimitError(retry_after)
+
+    def _parse_highlights_response(
+        self,
+        data: dict | list,
+        text_hashes: dict[str, str],
+    ) -> tuple[list[dict], list[int]]:
+        """Parse API response to extract highlights and book IDs.
+
+        Handles multiple response formats from the Readwise API:
+        - List of books with modified_highlights
+        - List of highlights directly
+        - Dict with modified_highlights or highlights key
+
+        Args:
+            data: Parsed JSON response
+            text_hashes: Mapping of text content to hash
+
+        Returns:
+            Tuple of (created_highlights list, book_ids list)
+        """
+        created_highlights: list[dict] = []
+        book_ids: list[int] = []
+
+        logger.debug(f"Response type: {type(data).__name__}")
+        if isinstance(data, dict):
+            logger.debug(f"Response keys: {list(data.keys())}")
+        elif isinstance(data, list) and data:
+            logger.debug(f"First item keys: {list(data[0].keys()) if data[0] else 'empty'}")
+
+        if isinstance(data, list):
+            # Check if it's a list of books (each with modified_highlights)
+            if data and isinstance(data[0], dict) and "modified_highlights" in data[0]:
+                for book in data:
+                    book_id = book.get("id")
+                    if book_id:
+                        book_ids.append(book_id)
+                    modified = book.get("modified_highlights", [])
+                    created_highlights.extend(modified)
+            else:
+                created_highlights = data
+        elif isinstance(data, dict):
+            created_highlights = (
+                data.get("modified_highlights")
+                or data.get("highlights")
+                or []
+            )
+
+        if created_highlights:
+            logger.debug(f"Found {len(created_highlights)} items in response")
+            first = created_highlights[0]
+            if isinstance(first, dict):
+                logger.debug(f"First item keys: {list(first.keys())}")
+            else:
+                logger.debug(f"First item type: {type(first).__name__}")
+
+        return created_highlights, book_ids
+
+    def _extract_readwise_ids(
+        self,
+        created_highlights: list,
+        book_ids: list[int],
+        text_hashes: dict[str, str],
+    ) -> dict[str, int]:
+        """Extract Readwise IDs from created highlights.
+
+        Handles both full highlight objects and ID-only responses.
+
+        Args:
+            created_highlights: List of created highlights or IDs
+            book_ids: List of book IDs for fallback fetching
+            text_hashes: Mapping of text content to hash
+
+        Returns:
+            Mapping of text_hash to Readwise highlight ID
+        """
+        readwise_ids: dict[str, int] = {}
+
+        if not created_highlights:
+            return readwise_ids
+
+        # Check if we got full objects or just IDs
+        got_ids_only = isinstance(created_highlights[0], int)
+
+        if got_ids_only and book_ids:
+            # API returned just highlight IDs - fetch full data from book
+            logger.debug(f"Got {len(created_highlights)} highlight IDs, fetching details...")
+            for book_id in book_ids:
+                try:
+                    book_highlights = self.get_highlights_for_book(book_id)
+                    for rw_hl in book_highlights:
+                        text = rw_hl.get("text", "")
+                        rw_id = rw_hl.get("id")
+                        if text and rw_id and text in text_hashes:
+                            readwise_ids[text_hashes[text]] = rw_id
+                except (ReadwiseAPIError, ReadwiseRateLimitError, httpx.HTTPError) as e:
+                    logger.debug(f"Failed to fetch highlights for book {book_id}: {e}")
+        else:
+            # Got full highlight objects - extract directly
+            for rw_hl in created_highlights:
+                if isinstance(rw_hl, dict):
+                    text = rw_hl.get("text", "")
+                    rw_id = rw_hl.get("id")
+                    if text and rw_id and text in text_hashes:
+                        readwise_ids[text_hashes[text]] = rw_id
+
+        return readwise_ids
+
     def create_highlights(
         self,
         highlights: list[ReadwiseHighlight],
@@ -93,49 +213,15 @@ class ReadwiseClient:
         if not highlights:
             return {"created": 0, "readwise_ids": {}}
 
-        import hashlib
-
-        # Build mapping of text_hash to highlight for response parsing
-        text_hashes = {}
-        for h in highlights:
-            text_hash = hashlib.sha256(h.text.encode()).hexdigest()[:32]
-            text_hashes[h.text] = text_hash
+        # Build mapping of text to hash for response parsing
+        text_hashes = {h.text: generate_text_hash(h.text) for h in highlights}
 
         # Format highlights for the API
-        payload = {
-            "highlights": [
-                {
-                    "text": h.text,
-                    "title": h.title,
-                    "author": h.author,
-                    "source_type": h.source_type,
-                    "category": h.category,
-                    "location": h.location,
-                    "location_type": h.location_type,
-                    "highlighted_at": (
-                        h.highlighted_at.isoformat() if h.highlighted_at else None
-                    ),
-                    "note": h.note,
-                    "source_url": h.source_url,
-                }
-                for h in highlights
-            ]
-        }
+        payload = {"highlights": self._format_highlights_payload(highlights)}
 
-        # Remove None values
-        for hl in payload["highlights"]:
-            for key in list(hl.keys()):
-                if hl[key] is None:
-                    del hl[key]
+        response = self._client.post(f"{self.BASE_URL}/highlights/", json=payload)
 
-        response = self._client.post(
-            f"{self.BASE_URL}/highlights/",
-            json=payload,
-        )
-
-        if response.status_code == 429:
-            retry_after = int(response.headers.get("Retry-After", 60))
-            raise ReadwiseRateLimitError(retry_after)
+        self._check_rate_limit(response)
 
         if response.status_code not in (200, 201):
             raise ReadwiseAPIError(
@@ -146,89 +232,40 @@ class ReadwiseClient:
         readwise_ids: dict[str, int] = {}
         try:
             data = response.json()
-
-            # Debug: show response structure
-            logger.debug(f"Response type: {type(data).__name__}")
-            if isinstance(data, dict):
-                logger.debug(f"Response keys: {list(data.keys())}")
-            elif isinstance(data, list) and data:
-                logger.debug(f"First item keys: {list(data[0].keys()) if data[0] else 'empty'}")
-
-            # Response format varies:
-            # - List of books with modified_highlights: [{"id": book_id, "modified_highlights": [...]}]
-            # - List of highlights directly: [{"id": 1, "text": "..."}, ...]
-            # - {"modified_highlights": [...]}
-            # - {"highlights": [...]}
-            created_highlights: list[dict] = []
-
-            # Track book IDs for fallback fetching
-            book_ids: list[int] = []
-
-            if isinstance(data, list):
-                # Check if it's a list of books (each with modified_highlights)
-                # or a list of highlights directly
-                if data and isinstance(data[0], dict) and "modified_highlights" in data[0]:
-                    # List of books - extract highlights and book IDs
-                    for book in data:
-                        book_id = book.get("id")
-                        if book_id:
-                            book_ids.append(book_id)
-                        modified = book.get("modified_highlights", [])
-                        created_highlights.extend(modified)
-                else:
-                    # List of highlights directly
-                    created_highlights = data
-            elif isinstance(data, dict):
-                created_highlights = (
-                    data.get("modified_highlights")
-                    or data.get("highlights")
-                    or []
-                )
-
-            if created_highlights:
-                logger.debug(f"Found {len(created_highlights)} items in modified_highlights")
-                first = created_highlights[0]
-                if isinstance(first, dict):
-                    logger.debug(f"First item keys: {list(first.keys())}")
-                else:
-                    logger.debug(f"First item type: {type(first).__name__} (value: {first})")
-
-            # Check if we got full objects or just IDs
-            got_ids_only = created_highlights and isinstance(created_highlights[0], int)
-
-            if got_ids_only and book_ids:
-                # API returned just highlight IDs - fetch full highlight data from book
-                logger.debug(f"Got {len(created_highlights)} highlight IDs, fetching details from book(s)...")
-
-                # Fetch highlights for each book and match by text
-                for book_id in book_ids:
-                    try:
-                        book_highlights = self.get_highlights_for_book(book_id)
-                        for rw_hl in book_highlights:
-                            text = rw_hl.get("text", "")
-                            rw_id = rw_hl.get("id")
-                            if text and rw_id:
-                                text_hash = text_hashes.get(text)
-                                if text_hash:
-                                    readwise_ids[text_hash] = rw_id
-                    except (ReadwiseAPIError, ReadwiseRateLimitError, httpx.HTTPError) as e:
-                        logger.debug(f"Failed to fetch highlights for book {book_id}: {e}")
-            else:
-                # Got full highlight objects - extract directly
-                for rw_hl in created_highlights:
-                    if isinstance(rw_hl, dict):
-                        text = rw_hl.get("text", "")
-                        rw_id = rw_hl.get("id")
-                        if text and rw_id:
-                            text_hash = text_hashes.get(text)
-                            if text_hash:
-                                readwise_ids[text_hash] = rw_id
+            created_highlights, book_ids = self._parse_highlights_response(data, text_hashes)
+            readwise_ids = self._extract_readwise_ids(created_highlights, book_ids, text_hashes)
         except (ValueError, KeyError) as e:
-            # If we can't parse the response, continue without IDs
             logger.warning(f"Failed to parse Readwise response: {e}")
             logger.debug(f"Response: {response.text[:500]}")
 
         return {"created": len(highlights), "readwise_ids": readwise_ids}
+
+    def _format_highlights_payload(self, highlights: list[ReadwiseHighlight]) -> list[dict]:
+        """Format highlights for the API payload.
+
+        Args:
+            highlights: List of highlights to format
+
+        Returns:
+            List of highlight dictionaries ready for API
+        """
+        formatted = []
+        for h in highlights:
+            hl_dict = {
+                "text": h.text,
+                "title": h.title,
+                "author": h.author,
+                "source_type": h.source_type,
+                "category": h.category,
+                "location": h.location,
+                "location_type": h.location_type,
+                "highlighted_at": h.highlighted_at.isoformat() if h.highlighted_at else None,
+                "note": h.note,
+                "source_url": h.source_url,
+            }
+            # Remove None values
+            formatted.append({k: v for k, v in hl_dict.items() if v is not None})
+        return formatted
 
     def delete_highlight(self, highlight_id: int) -> bool:
         """Delete a highlight from Readwise.
@@ -243,13 +280,9 @@ class ReadwiseClient:
             ReadwiseAPIError: If the API request fails
             ReadwiseRateLimitError: If rate limit is exceeded
         """
-        response = self._client.delete(
-            f"{self.BASE_URL}/highlights/{highlight_id}",
-        )
+        response = self._client.delete(f"{self.BASE_URL}/highlights/{highlight_id}")
 
-        if response.status_code == 429:
-            retry_after = int(response.headers.get("Retry-After", 60))
-            raise ReadwiseRateLimitError(retry_after)
+        self._check_rate_limit(response)
 
         if response.status_code == 404:
             return False
@@ -285,19 +318,13 @@ class ReadwiseClient:
         Returns:
             List of book/source dictionaries
         """
-        params = {}
-        if category:
-            params["category"] = category
-
+        params = {"category": category} if category else {}
         books = []
         next_url: Optional[str] = f"{self.BASE_URL}/books/"
 
         while next_url:
             response = self._client.get(next_url, params=params)
-
-            if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", 60))
-                raise ReadwiseRateLimitError(retry_after)
+            self._check_rate_limit(response)
 
             if response.status_code != 200:
                 raise ReadwiseAPIError(
@@ -339,14 +366,11 @@ class ReadwiseClient:
         """
         highlights = []
         next_url: Optional[str] = f"{self.BASE_URL}/highlights/"
-        params = {"book_id": book_id}
+        params: dict = {"book_id": book_id}
 
         while next_url:
             response = self._client.get(next_url, params=params)
-
-            if response.status_code == 429:
-                retry_after = int(response.headers.get("Retry-After", 60))
-                raise ReadwiseRateLimitError(retry_after)
+            self._check_rate_limit(response)
 
             if response.status_code != 200:
                 raise ReadwiseAPIError(

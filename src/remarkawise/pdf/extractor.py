@@ -4,7 +4,6 @@ This module extracts text from PDF regions that correspond to highlight
 annotations from reMarkable devices.
 """
 
-import hashlib
 import re
 from pathlib import Path
 from typing import Optional
@@ -12,6 +11,7 @@ from typing import Optional
 import fitz  # PyMuPDF
 
 from remarkawise.models import Highlight
+from remarkawise.utils import generate_highlight_id
 
 # PDF ligature mappings (Unicode ligatures to their decomposed forms)
 # These are unambiguous and safe to replace
@@ -285,9 +285,7 @@ class PDFHighlightExtractor:
 
         This ensures the same highlight gets the same ID across syncs.
         """
-        content = f"{document_id}:{page_number}:{text[:100]}"
-        hash_value = hashlib.sha256(content.encode()).hexdigest()[:16]
-        return f"rm_{hash_value}"
+        return generate_highlight_id(document_id, page_number, text)
 
     def get_document_metadata(self) -> dict[str, Optional[str]]:
         """Extract metadata from the PDF.
