@@ -258,10 +258,6 @@ class SyncEngine:
 
         self._log(f"  Extracted {len(all_highlights)} highlights")
 
-        # Apply LLM cleanup if enabled
-        if self.llm_cleanup and all_highlights:
-            all_highlights = self._apply_llm_cleanup(all_highlights)
-
         # Detect deleted highlights (synced before but no longer on device)
         deleted_count = self._sync_deletions(doc.id, all_highlights)
 
@@ -279,6 +275,10 @@ class SyncEngine:
         if not highlights_to_sync:
             self._log("  No new highlights to sync")
             return 0, deleted_count
+
+        # Apply LLM cleanup only to new highlights (after filtering)
+        if self.llm_cleanup:
+            highlights_to_sync = self._apply_llm_cleanup(highlights_to_sync)
 
         # Get document metadata from PDF (fallback for title)
         with PDFHighlightExtractor(pdf_path) as extractor:
