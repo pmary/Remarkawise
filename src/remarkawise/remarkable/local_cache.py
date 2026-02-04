@@ -123,6 +123,12 @@ class LocalCacheClient:
         if metadata.get("type") != "DocumentType":
             return None
 
+        # Skip deleted documents and documents in trash
+        if metadata.get("deleted", False):
+            return None
+        if metadata.get("parent") == "trash":
+            return None
+
         doc_id = metadata_file.stem
 
         # Determine document type from file existence
