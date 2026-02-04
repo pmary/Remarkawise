@@ -4,7 +4,7 @@ import json
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, TypedDict
 
 from remarkawise.config import Settings
 from remarkawise.logging import get_logger
@@ -25,7 +25,22 @@ from remarkawise.readwise.client import (
 )
 from remarkawise.remarkable.local_cache import LocalCacheClient, LocalCacheError
 from remarkawise.remarkable.parser import HighlightParser
-from remarkawise.sync.state import StateManager
+from remarkawise.sync.state import StateManager, SyncStats
+
+
+class RecentSyncInfo(TypedDict):
+    """Information about a recently synced document."""
+
+    name: str
+    synced_at: str
+    highlights: int
+
+
+class SyncStatus(TypedDict):
+    """Current sync status information."""
+
+    stats: SyncStats
+    recent_syncs: list[RecentSyncInfo]
 
 if TYPE_CHECKING:
     from remarkawise.llm.cleanup import LLMTextCleaner
@@ -593,11 +608,11 @@ class SyncEngine:
                     raise
         return {}
 
-    def get_status(self) -> dict:
+    def get_status(self) -> SyncStatus:
         """Get current sync status.
 
         Returns:
-            Dictionary with sync statistics
+            SyncStatus with stats and recent_syncs information
         """
         stats = self._state_manager.get_stats()
         synced_docs = self._state_manager.get_all_synced_documents()

@@ -8,10 +8,26 @@ import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TypedDict
 
 from remarkawise.models import Highlight, SyncState
 from remarkawise.utils import generate_content_checksum, generate_text_hash
+
+
+class SyncedHighlightInfo(TypedDict):
+    """Information about a synced highlight."""
+
+    highlight_id: str
+    text_hash: str
+    readwise_id: Optional[int]
+
+
+class SyncStats(TypedDict):
+    """Sync statistics."""
+
+    documents_synced: int
+    highlights_synced: int
+    total_highlights: int
 
 
 class StateManager:
@@ -202,14 +218,14 @@ class StateManager:
 
     def get_synced_highlights_for_document(
         self, document_id: str
-    ) -> list[dict[str, any]]:
+    ) -> list[SyncedHighlightInfo]:
         """Get all synced highlights for a document.
 
         Args:
             document_id: Document ID
 
         Returns:
-            List of dicts with highlight_id, text_hash, and readwise_id
+            List of SyncedHighlightInfo with highlight_id, text_hash, and readwise_id
         """
         conn = self._get_conn()
         cursor = conn.execute(
@@ -232,7 +248,7 @@ class StateManager:
 
     def get_deleted_highlights(
         self, document_id: str, current_highlights: list[Highlight]
-    ) -> list[dict[str, any]]:
+    ) -> list[SyncedHighlightInfo]:
         """Find highlights that were synced but are no longer on the device.
 
         Args:
@@ -240,7 +256,7 @@ class StateManager:
             current_highlights: List of highlights currently on the device
 
         Returns:
-            List of dicts with highlight_id, text_hash, and readwise_id for deleted highlights
+            List of SyncedHighlightInfo for highlights that were deleted from device
         """
         current_ids = {h.id for h in current_highlights}
         synced = self.get_synced_highlights_for_document(document_id)
@@ -322,11 +338,11 @@ class StateManager:
 
         return states
 
-    def get_stats(self) -> dict[str, int]:
+    def get_stats(self) -> SyncStats:
         """Get sync statistics.
 
         Returns:
-            Dictionary with sync stats
+            SyncStats with documents_synced, highlights_synced, total_highlights
         """
         conn = self._get_conn()
 

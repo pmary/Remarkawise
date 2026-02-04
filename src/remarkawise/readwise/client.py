@@ -5,7 +5,7 @@ Documentation: https://readwise.io/api_deets
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Optional, TypedDict
 
 import httpx
 
@@ -14,6 +14,37 @@ from remarkawise.models import Highlight, ReadwiseHighlight
 from remarkawise.utils import generate_text_hash
 
 logger = get_logger("readwise")
+
+
+class CreateHighlightsResult(TypedDict):
+    """Result from creating highlights."""
+
+    created: int
+    readwise_ids: dict[str, int]
+
+
+class ReadwiseBook(TypedDict, total=False):
+    """Book/source information from Readwise API."""
+
+    id: int
+    title: str
+    author: str
+    category: str
+    source: str
+    num_highlights: int
+    cover_image_url: str
+
+
+class ReadwiseHighlightInfo(TypedDict, total=False):
+    """Highlight information from Readwise API."""
+
+    id: int
+    text: str
+    note: str
+    location: int
+    location_type: str
+    highlighted_at: str
+    book_id: int
 
 
 class ReadwiseAPIError(Exception):
@@ -195,23 +226,21 @@ class ReadwiseClient:
     def create_highlights(
         self,
         highlights: list[ReadwiseHighlight],
-    ) -> dict:
+    ) -> CreateHighlightsResult:
         """Create multiple highlights in Readwise.
 
         Args:
             highlights: List of highlights to create
 
         Returns:
-            Dictionary with:
-                - created: count of created highlights
-                - readwise_ids: mapping of text_hash to Readwise highlight ID
+            CreateHighlightsResult with created count and readwise_ids mapping
 
         Raises:
             ReadwiseAPIError: If the API request fails
             ReadwiseRateLimitError: If rate limit is exceeded
         """
         if not highlights:
-            return {"created": 0, "readwise_ids": {}}
+            return CreateHighlightsResult(created=0, readwise_ids={})
 
         # Build mapping of text to hash for response parsing
         text_hashes = {h.text: generate_text_hash(h.text) for h in highlights}
@@ -238,7 +267,7 @@ class ReadwiseClient:
             logger.warning(f"Failed to parse Readwise response: {e}")
             logger.debug(f"Response: {response.text[:500]}")
 
-        return {"created": len(highlights), "readwise_ids": readwise_ids}
+        return CreateHighlightsResult(created=len(highlights), readwise_ids=readwise_ids)
 
     def _format_highlights_payload(self, highlights: list[ReadwiseHighlight]) -> list[dict]:
         """Format highlights for the API payload.
@@ -309,14 +338,14 @@ class ReadwiseClient:
                 deleted += 1
         return deleted
 
-    def get_books(self, category: Optional[str] = None) -> list[dict]:
+    def get_books(self, category: Optional[str] = None) -> list[ReadwiseBook]:
         """Get list of books/sources in Readwise.
 
         Args:
             category: Filter by category (books, articles, tweets, etc.)
 
         Returns:
-            List of book/source dictionaries
+            List of ReadwiseBook objects
         """
         params = {"category": category} if category else {}
         books = []
@@ -338,14 +367,14 @@ class ReadwiseClient:
 
         return books
 
-    def find_book_by_title(self, title: str) -> Optional[dict]:
+    def find_book_by_title(self, title: str) -> Optional[ReadwiseBook]:
         """Find a book by its title.
 
         Args:
             title: Book title to search for
 
         Returns:
-            Book dictionary if found, None otherwise
+            ReadwiseBook if found, None otherwise
         """
         books = self.get_books()
 
@@ -355,14 +384,14 @@ class ReadwiseClient:
 
         return None
 
-    def get_highlights_for_book(self, book_id: int) -> list[dict]:
+    def get_highlights_for_book(self, book_id: int) -> list[ReadwiseHighlightInfo]:
         """Get all highlights for a specific book.
 
         Args:
             book_id: Readwise book ID
 
         Returns:
-            List of highlight dictionaries
+            List of ReadwiseHighlightInfo objects
         """
         highlights = []
         next_url: Optional[str] = f"{self.BASE_URL}/highlights/"
