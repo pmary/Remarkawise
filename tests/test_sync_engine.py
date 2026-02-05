@@ -14,7 +14,7 @@ import respx
 from remarkawise.config import Settings
 from remarkawise.models import DocumentType, Highlight, RemarkableDocument, SyncResult
 from remarkawise.readwise.client import ReadwiseClient, ReadwiseRateLimitError
-from remarkawise.remarkable.client import RemarkableClient
+from remarkawise.remarkable.local_cache import LocalCacheClient
 from remarkawise.sync.engine import SyncEngine
 from remarkawise.sync.state import StateManager
 
@@ -37,32 +37,6 @@ class TestSyncEngineInit:
         assert settings.cache_dir.exists()
         engine.close()
 
-    def test_remarkable_client_lazy_creation(self, settings: Settings) -> None:
-        """Test that reMarkable client is created lazily."""
-        engine = SyncEngine(settings)
-
-        assert engine._rm_client is None
-
-        # Accessing property should create client
-        client = engine.remarkable_client
-        assert client is not None
-        assert engine._rm_client is not None
-        engine.close()
-
-    def test_remarkable_client_requires_token(self, temp_dir: Path) -> None:
-        """Test that reMarkable client requires device token."""
-        settings = Settings(
-            remarkable_device_token=None,
-            data_dir=temp_dir,
-        )
-        engine = SyncEngine(settings)
-
-        with pytest.raises(ValueError) as exc_info:
-            _ = engine.remarkable_client
-
-        assert "device token not configured" in str(exc_info.value)
-        engine.close()
-
     def test_readwise_client_requires_token(self, temp_dir: Path) -> None:
         """Test that Readwise client requires access token."""
         settings = Settings(
@@ -83,8 +57,8 @@ class TestSyncEngineSync:
 
     @pytest.fixture
     def mock_remarkable_client(self) -> MagicMock:
-        """Create a mock reMarkable client."""
-        client = MagicMock(spec=RemarkableClient)
+        """Create a mock reMarkable local cache client."""
+        client = MagicMock(spec=LocalCacheClient)
         client.list_documents.return_value = [
             RemarkableDocument(
                 id="doc-001",
@@ -125,13 +99,13 @@ class TestSyncEngineSync:
         assert result.highlights_synced == 0
         engine.close()
 
-    def test_sync_filters_non_pdf(
+    def test_sync_filters_unsupported_types(
         self,
         settings: Settings,
         mock_remarkable_client: MagicMock,
         mock_readwise_client: MagicMock,
     ) -> None:
-        """Test that sync filters out non-PDF documents."""
+        """Test that sync filters out unsupported document types (notebooks)."""
         mock_remarkable_client.list_documents.return_value = [
             RemarkableDocument(
                 id="doc-001",
@@ -167,18 +141,22 @@ class TestSyncEngineSync:
 
         result = engine.sync()
 
-        # Only PDF should be processed
-        assert mock_remarkable_client.get_document_with_highlights.call_count == 1
+        # PDF and EPUB should be processed, NOTEBOOK should be filtered out
+        assert mock_remarkable_client.get_document_with_highlights.call_count == 2
         engine.close()
 
-    def test_sync_skips_already_synced(
+    def test_sync_processes_synced_documents(
         self,
         settings: Settings,
         mock_remarkable_client: MagicMock,
         mock_readwise_client: MagicMock,
         state_manager: StateManager,
     ) -> None:
-        """Test that sync skips documents already synced at same version."""
+        """Test that sync processes documents even if previously synced.
+
+        The sync engine always checks documents for new highlights since
+        document version doesn't change when highlights are added.
+        """
         from remarkawise.models import SyncState
 
         # Pre-mark document as synced
@@ -186,9 +164,12 @@ class TestSyncEngineSync:
             document_id="doc-001",
             document_name="Test Document",
             last_synced_at=datetime.utcnow(),
-            last_version=1,  # Same version as in mock
+            last_version=1,
         )
         state_manager.update_sync_state(state)
+
+        # Return no PDF so processing ends early
+        mock_remarkable_client.get_document_with_highlights.return_value = (None, [])
 
         engine = SyncEngine(
             settings,
@@ -199,8 +180,9 @@ class TestSyncEngineSync:
 
         result = engine.sync()
 
-        # Should not download document since it's already synced
-        mock_remarkable_client.get_document_with_highlights.assert_not_called()
+        # Document should still be processed (but no highlights synced)
+        mock_remarkable_client.get_document_with_highlights.assert_called()
+        assert result.highlights_synced == 0
         engine.close()
 
     def test_sync_force_resyncs(
@@ -302,8 +284,9 @@ class TestSyncEngineSync:
         ]
 
         # First call raises error, second succeeds
+        # Using OSError which is caught by the sync engine
         mock_remarkable_client.get_document_with_highlights.side_effect = [
-            Exception("Download failed"),
+            OSError("Download failed"),
             (None, []),  # No highlights
         ]
 
@@ -409,7 +392,7 @@ class TestSyncEngineCleanup:
 
     def test_close_cleans_up_all(self, settings: Settings) -> None:
         """Test that close() cleans up all resources."""
-        mock_rm = MagicMock(spec=RemarkableClient)
+        mock_rm = MagicMock(spec=LocalCacheClient)
         mock_rw = MagicMock(spec=ReadwiseClient)
 
         engine = SyncEngine(

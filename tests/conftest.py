@@ -29,9 +29,10 @@ def temp_dir() -> Generator[Path, None, None]:
 def settings(temp_dir: Path) -> Settings:
     """Create test settings with temporary directories."""
     return Settings(
-        remarkable_device_token="test-device-token",
         readwise_access_token="test-readwise-token",
+        remarkable_local_cache_path=temp_dir / "remarkable_cache",
         data_dir=temp_dir / "data",
+        _env_file=None,  # Don't load .env in tests
     )
 
 
