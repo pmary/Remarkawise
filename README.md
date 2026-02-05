@@ -2,24 +2,45 @@
 
 Sync highlights from your reMarkable Paper Pro to Readwise Reader.
 
-## Features
+## Quick Start
 
-- **Local-first**: Reads directly from the reMarkable desktop app cache (no cloud API needed)
-- **PDF & EPUB support**: Syncs highlights from both PDFs and EPUBs (including web articles saved via browser extension)
-- **Automatic highlight extraction**: Extracts highlights from reMarkable's annotation files (`.rm` format)
-- **PDF text extraction**: Maps highlight regions to actual text content using PyMuPDF
-- **Native PDF highlights**: Also syncs highlights embedded directly in PDFs
-- **Tag filtering**: Sync only documents tagged with a specific tag (e.g., "readwise")
-- **Content category**: Control whether highlights appear in Readwise Books or Articles tab via tags
-- **Incremental sync**: Only syncs new highlights (existing highlights are not re-uploaded)
-- **Deletion sync**: Removes highlights from Readwise when deleted on reMarkable
-- **State tracking**: Remembers what has been synced to avoid duplicates
-- **LLM text cleanup** (optional): Uses Claude AI to fix corrupted text from PDF extraction
+```bash
+# 1. Install
+git clone https://github.com/pmary/Remarkawise.git
+cd Remarkawise
+pip install -e .
+
+# 2. Configure (get token from https://readwise.io/access_token)
+cp .env.example .env
+# Edit .env and add: READWISE_ACCESS_TOKEN=your_token
+
+# 3. Verify setup
+remarkawise auth
+
+# 4. Sync your highlights
+remarkawise sync
+```
 
 ## Requirements
 
-- reMarkable desktop app installed and synced
-- Readwise account with API access
+- **Python 3.10+**
+- **reMarkable desktop app** installed and synced
+  - macOS: Download from [remarkable.com](https://remarkable.com/desktop)
+  - Windows/Linux: Also supported (see [Configuration](#configuration) for cache paths)
+- **Readwise account** with API access ([get token here](https://readwise.io/access_token))
+
+## Features
+
+### Core
+- **Local-first**: Reads directly from the reMarkable desktop app cache (no cloud API needed)
+- **PDF & EPUB support**: Syncs highlights from PDFs and EPUBs (including web articles)
+- **Incremental sync**: Only syncs new highlights, tracks what's been synced
+- **Deletion sync**: Removes highlights from Readwise when deleted on reMarkable
+
+### Advanced
+- **Tag filtering**: Sync only documents with a specific tag (e.g., `--tag readwise`)
+- **Content categories**: Control Readwise placement (Books vs Articles tab) via document tags
+- **LLM text cleanup**: Optional Claude AI integration to fix garbled PDF text
 
 ## Installation
 
@@ -53,7 +74,22 @@ Your `.env` file should look like:
 READWISE_ACCESS_TOKEN=your_readwise_token_here
 ```
 
-### 2. Verify configuration
+### 2. (Optional) Configure cache path
+
+On **macOS**, the cache path is auto-detected. On **Windows** or **Linux**, or if your cache is in a custom location, add to `.env`:
+
+```bash
+# Windows (typical path)
+REMARKABLE_LOCAL_CACHE_PATH=C:\Users\YourName\AppData\Local\remarkable\remarkable\desktop
+
+# Linux (typical path)
+REMARKABLE_LOCAL_CACHE_PATH=/home/yourname/.local/share/remarkable/desktop
+
+# macOS (auto-detected, but can override)
+REMARKABLE_LOCAL_CACHE_PATH=/Users/yourname/Library/Containers/com.remarkable.desktop/Data/Library/Application Support/remarkable/desktop
+```
+
+### 3. Verify configuration
 
 ```bash
 remarkawise auth
@@ -157,6 +193,35 @@ remarkawise reset --all --yes
 
 **Note:** This clears the local tracking database, not Readwise. After reset, the next sync will re-upload all highlights as new entries.
 
+## Troubleshooting
+
+### "reMarkable desktop cache not found"
+
+The tool can't find your reMarkable desktop app cache. Solutions:
+
+1. **Make sure the desktop app is installed** and has synced at least once
+2. **Check the cache path** - on Windows/Linux, you need to set `REMARKABLE_LOCAL_CACHE_PATH` in your `.env` file (see [Configuration](#configuration))
+3. **Verify the path exists** - navigate to it in your file explorer
+
+### "No documents found"
+
+1. Make sure documents are **synced** in the reMarkable desktop app
+2. If using `--tag`, verify your documents have that tag on reMarkable
+3. Run `remarkawise list-documents --all` to see all document types
+
+### Highlight text is garbled or has missing spaces
+
+PDF text extraction isn't perfect. Try:
+
+1. Use `--llm-cleanup` flag to fix text with AI (requires `ANTHROPIC_API_KEY`)
+2. Check if the PDF has selectable text (scanned PDFs won't work well)
+
+### Highlights not appearing in Readwise
+
+1. Run `remarkawise auth` to verify your token is valid
+2. Check `remarkawise status` to see if highlights were synced
+3. Use `remarkawise sync --verbose` to see detailed output
+
 ## How it works
 
 1. **Fetch documents**: Reads from the reMarkable desktop app local cache
@@ -167,6 +232,8 @@ remarkawise reset --all --yes
 6. **Track state**: Stores sync state locally (SQLite) to enable incremental updates
 
 ## Architecture
+
+> **Note:** This section is for developers interested in how the tool works internally.
 
 ### Data Flow
 
