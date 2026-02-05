@@ -8,7 +8,15 @@ Sync highlights from your reMarkable Paper Pro to Readwise Reader.
 # 1. Install
 git clone https://github.com/pmary/Remarkawise.git
 cd Remarkawise
-pip install -e .
+pip install -e . # Or if you want to use Anthropic: pip install -e ".[llm]"
+
+# OR if you want to use a virtual environment
+# Create a virtual environment
+python3 -m venv .venv
+# Activate it
+source .venv/bin/activate
+# Now install works
+pip install -e . # Or if you want to use Anthropic: pip install -e ".[llm]"
 
 # 2. Configure (get token from https://readwise.io/access_token)
 cp .env.example .env
