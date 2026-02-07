@@ -135,6 +135,23 @@ You can tag documents on your reMarkable and only sync documents with a specific
 
 This is useful if you only want certain documents to sync to Readwise.
 
+#### Setting the author manually
+
+When a document has no embedded author metadata (or you want to override it), you can set the author directly on your reMarkable using a tag:
+
+1. On your reMarkable, open a document
+2. Tap the menu (three dots) and select "Add tag"
+3. Create a tag like `author:Cal Newport`
+4. The author name will be picked up on the next sync
+
+Multiple `author:` tags are joined with a comma (e.g., `author:Alice Smith` + `author:Bob Jones` → "Alice Smith, Bob Jones"). The prefix is case-insensitive (`author:`, `Author:`, `AUTHOR:` all work).
+
+**Author resolution priority:**
+1. `author:` tag on reMarkable (manual override)
+2. Author from document metadata (`.content` file)
+3. Author embedded in PDF metadata
+4. "Unknown" (Readwise fallback)
+
 #### Setting content category
 
 Control where synced highlights appear in Readwise (Books or Articles tab):
