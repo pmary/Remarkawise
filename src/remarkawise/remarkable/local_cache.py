@@ -190,11 +190,14 @@ class LocalCacheClient:
     def _read_document_tags(self, doc_id: str) -> list[str]:
         """Read tags from a document's .content file.
 
+        Tags with the 'author:' prefix are excluded as they are used
+        for manual author name assignment (see _extract_author_from_tags).
+
         Args:
             doc_id: Document ID
 
         Returns:
-            List of tag names
+            List of tag names (excluding author: tags)
         """
         content = self._read_content_file(doc_id)
         if not content:
@@ -206,13 +209,44 @@ class LocalCacheClient:
         tags = []
         for tag in raw_tags:
             if isinstance(tag, str):
-                tags.append(tag)
+                name = tag
             elif isinstance(tag, dict) and "name" in tag:
-                tags.append(tag["name"])
+                name = tag["name"]
+            else:
+                continue
+            # Exclude author: tags (used for manual author assignment)
+            if not name.lower().startswith("author:"):
+                tags.append(name)
         return tags
+
+    def _extract_author_from_tags(self, tags: list[str]) -> Optional[str]:
+        """Extract author name(s) from tags with the 'author:' prefix.
+
+        Tags like 'author:Cal Newport' are interpreted as manual author overrides.
+        The prefix is matched case-insensitively.
+
+        Args:
+            tags: List of tag names
+
+        Returns:
+            Author name(s) joined with ', ', or None if no author tags found
+        """
+        author_names = []
+        for tag in tags:
+            if tag.lower().startswith("author:"):
+                name = tag[len("author:"):].strip()
+                if name:
+                    author_names.append(name)
+        if author_names:
+            return ", ".join(author_names)
+        return None
 
     def _read_document_author(self, doc_id: str) -> Optional[str]:
         """Read author from a document's .content file.
+
+        Author resolution priority:
+        1. Tag-based author (author:Name tag on reMarkable)
+        2. documentMetadata.authors from .content file
 
         Args:
             doc_id: Document ID
@@ -224,7 +258,20 @@ class LocalCacheClient:
         if not content:
             return None
 
-        # Author is stored in documentMetadata.authors as a list
+        # First, check for author override via tags
+        raw_tags = content.get("tags", [])
+        tags = []
+        for tag in raw_tags:
+            if isinstance(tag, str):
+                tags.append(tag)
+            elif isinstance(tag, dict) and "name" in tag:
+                tags.append(tag["name"])
+
+        tag_author = self._extract_author_from_tags(tags)
+        if tag_author:
+            return tag_author
+
+        # Fall back to documentMetadata.authors
         doc_metadata = content.get("documentMetadata", {})
         authors = doc_metadata.get("authors", [])
 
